@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from exc_processor import Loc, ExceptionProcessor
+from exc_processor import TokenLocation, ExceptionProcessor
 
 
 class Type(Enum):
@@ -19,7 +19,7 @@ class Type(Enum):
 
 @dataclass(frozen=True)
 class Node(ABC):
-    pos: Loc = field(repr=False)
+    pos: TokenLocation = field(repr=False)
 
     def is_terminal(self):
         return len(self.children()) == 0

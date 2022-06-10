@@ -1,54 +1,36 @@
+import itertools
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Iterator, Final
 import re
 
-from exc_processor import Loc, ExceptionProcessor
+from exc_processor import TokenLocation, ExceptionProcessor
 
 
 class NoMatchFound(Exception):
     pass
 
 
-LET = "let"  # define a binding
-L_PAR = "("
-R_PAR = ")"
-
-# arithmetic operators
-ADD = "+"
-SUBTRACT = "-"
-MULTIPLY = "*"
-DIVIDE = "/"
-MODULUS = "%"
-EXPONENT = "^"
-COMMA = ","
-COMPLEX = "complex"  # used to define a complex number
-F_DIV = "//"
-DEFINE = ":="
-FUNCTION = "func"
-NEWLINE = "\n"
-CONTINUATION = "\\n"
-
-
 class TokenType(Enum):
-    LET = "bind"  # define a binding
-    L_PAR = "("
-    R_PAR = ")"
-
     # arithmetic operators
     ADD = "+"
     SUBTRACT = "-"
     MULTIPLY = "*"
-    DIVIDE = "/"
+    TRUE_DIVIDE = "/"  # for example 3 / 2 = 1.5
+    FLOOR_DIV = "//"  # for example
     MODULUS = "%"
     EXPONENT = "^"
     COMMA = ","
     COMPLEX = "complex"  # used to define a complex number
-    F_DIV = "//"
     DEFINE = ":="
-    FUNCTION = "func"
+    LET = "let"  # define a binding
+    FUNCTION = "func"  # define a function
     NEWLINE = "\n"
-    CONTINUATION = "\\n"
+    CONTINUE = "\\n"
+
+    L_PAR = "("
+    R_PAR = ")"
+
     ID = "identifier"
     FLOAT = "float"
     INT = "integer"
@@ -71,11 +53,17 @@ class Token:
 
     token_type: TokenType
     lexeme: str
-    pos: Loc
+    loc: TokenLocation
+
+    @staticmethod
+    def from_token_type(token_type: TokenType, loc: TokenLocation):
+        """A convenient constructor to avoid the frequent pattern:
+        Token(TokenType.X, TokenType.X.value, loc)"""
+        return Token(token_type, token_type.value, loc)
 
 
 # A dummy token with its own bogus type and its own bogus location
-INVALID_TOKEN: Final[Token] = Token(TokenType.BOGUS, "", Loc("", -1, -1, -1))
+INVALID_TOKEN: Final[Token] = Token(TokenType.BOGUS, "", TokenLocation("", -1, -1, -1))
 
 
 def group(*choices):
@@ -107,27 +95,30 @@ Name = r"\w+"
 
 
 class Tokenizer:
+    """This class tokenizes an Ep program"""
+
     def __init__(self, string: str, exception_processor: ExceptionProcessor):
-        self.exception_processor = exception_processor
-        self.string = string
-        self.line = 0
-        self.column = 0
-        self.offset = 0
+        self._exception_processor = exception_processor
+        self._code = string
+        self._linenum = 0
+        self._column = 0
+        self._code_offset = 0
+        self._token_iterable = self._tokenize()
 
-    def to_next_char(self):
-        self.offset += 1
-        self.column += 1
+    def _to_next_char(self):
+        self._code_offset += 1
+        self._column += 1
 
-    def skip_n_chars(self, n):
-        self.offset += n
-        self.column += n
+    def _skip_n_chars(self, n):
+        self._code_offset += n
+        self._column += n
 
-    def match_number(self, number_regex: str) -> Optional[tuple[str, TokenType]]:
-        match = re.match("^" + number_regex, self.string[self.offset :])
-        ret_type = None
+    def _match_number(self, number_regex: str) -> Optional[tuple[str, TokenType]]:
+        match = re.match("^" + number_regex, self._code[self._code_offset :])
+        token_type = None
         lexeme = ""
         if match is not None:
-            lexeme, ret_type = (
+            lexeme, token_type = (
                 match.group(0),
                 TokenType.FLOAT
                 if number_regex == Floatnumber
@@ -137,90 +128,103 @@ class Tokenizer:
                 if number_regex == Imagnumber
                 else None,
             )
-        if ret_type is None:
+        if token_type is None:
             return None
         else:
-            return lexeme, ret_type
+            return lexeme, token_type
 
-    def match_identifier(self) -> Optional[tuple[str, TokenType]]:
-        re_match = re.match("^" + Name, self.string[self.offset :])
+    def _match_keyword(self) -> Optional[tuple[str, TokenType]]:
+        re_match = re.match("^" + Name, self._code[self._code_offset :])
         if re_match is not None:
             re_match = re_match.group(0)
-            if re_match == LET:
-                return LET, TokenType.LET
-            if re_match == FUNCTION:
-                return FUNCTION, TokenType.FUNCTION
+            if re_match == TokenType.LET.value:
+                return TokenType.LET.value, TokenType.LET
+            if re_match == TokenType.FUNCTION.value:
+                return TokenType.FUNCTION.value, TokenType.FUNCTION
             return re_match, TokenType.ID
         return None
 
-    def get_identifier(self, pos) -> Token:
+    def _try_match_keyword_or_number(self, pos) -> Token:
         ret = (
-            self.match_number(Imagnumber)
-            or self.match_number(Floatnumber)
-            or self.match_number(Intnumber)
-            or self.match_identifier()
+            self._match_number(Imagnumber)
+            or self._match_number(Floatnumber)
+            or self._match_number(Intnumber)
+            or self._match_keyword()
         )
         if ret is None:
             raise NoMatchFound
         else:
             lexeme, ret_type = ret
-            self.skip_n_chars(len(lexeme) - 1)
+            self._skip_n_chars(len(lexeme) - 1)
             return Token(ret_type, lexeme, pos)
 
-    def current_char(self):
-        return self.string[self.offset]
+    def _current_char(self):
+        return self._code[self._code_offset]
 
-    def remaining_untokenized_code(self):
-        return self.string[self.offset :]
+    def _remaining_code(self):
+        return self._code[self._code_offset :]
 
-    def tokenize(self) -> Iterator[Token]:
-        filename = self.exception_processor.filename
-        while self.offset < len(self.string):
-            pos = Loc(filename, self.line, self.column, self.offset)
-            if self.remaining_untokenized_code().startswith(F_DIV):
-                token = Token(TokenType.F_DIV, F_DIV, pos)
-                self.to_next_char()
-            elif self.remaining_untokenized_code().startswith(DEFINE):
-                token = Token(TokenType.DEFINE, DEFINE, pos)
-                self.to_next_char()
-            elif self.remaining_untokenized_code().startswith(CONTINUATION):
-                token = Token(TokenType.WHITESPACE, CONTINUATION, pos)
-                self.to_next_char()
-            elif self.current_char() != NEWLINE and self.current_char().isspace():
-                token = Token(TokenType.WHITESPACE, self.current_char(), pos)
+    def _tokenize(self) -> Iterator[Token]:
+        filename = self._exception_processor.filename
+        while self._code_offset < len(self._code):
+            token_location = TokenLocation(
+                filename, self._linenum, self._column, self._code_offset
+            )
+            # we greedily match two character tokens
+            if (
+                self._remaining_code().startswith(TokenType.FLOOR_DIV.value)
+                or self._remaining_code().startswith(TokenType.DEFINE.value)
+                or self._remaining_code().startswith(TokenType.CONTINUE.value)
+            ):
+                token_type = TokenType(
+                    self._code[self._code_offset : self._code_offset + 2]
+                )
+                token = Token.from_token_type(token_type, token_location)
+                self._to_next_char()
+            # we try to match whitespace while avoiding NEWLINES because we
+            # are using NEWLINES to split lines in our program
+            elif (
+                self._current_char() != TokenType.NEWLINE.value
+                and self._current_char().isspace()
+            ):
+                token = Token(
+                    TokenType.WHITESPACE, self._current_char(), token_location
+                )
             else:
                 try:
-                    token = self.get_identifier(pos)
-                except NoMatchFound:
-                    match TokenType(self.current_char()):
-                        case TokenType.L_PAR:
-                            token = Token(TokenType.L_PAR, L_PAR, pos)
-                        case TokenType.R_PAR:
-                            token = Token(TokenType.R_PAR, R_PAR, pos)
-                        case TokenType.ADD:
-                            token = Token(TokenType.ADD, ADD, pos)
-                        case TokenType.SUBTRACT:
-                            token = Token(TokenType.SUBTRACT, SUBTRACT, pos)
-                        case TokenType.MODULUS:
-                            token = Token(TokenType.MODULUS, MODULUS, pos)
-                        case TokenType.DIVIDE:
-                            token = Token(TokenType.DIVIDE, DIVIDE, pos)
-                        case TokenType.MULTIPLY:
-                            token = Token(TokenType.MULTIPLY, MULTIPLY, pos)
-                        case TokenType.EXPONENT:
-                            token = Token(TokenType.EXPONENT, EXPONENT, pos)
-                        case TokenType.COMMA:
-                            token = Token(TokenType.COMMA, COMMA, pos)
+                    # try to match one character tokens
+                    token_type = TokenType(self._current_char())
+                    match token_type:
+                        # We try to match tokens which are just one character
+                        # These will only cause col and offset to increase by 1
+                        case TokenType.L_PAR | TokenType.R_PAR | TokenType.ADD | TokenType.SUBTRACT | TokenType.MODULUS | TokenType.TRUE_DIVIDE | TokenType.MULTIPLY | TokenType.EXPONENT | TokenType.COMMA:
+                            token = Token.from_token_type(token_type, token_location)
+                        # Although a newline is only one character, we match it differently because it will cause
+                        # col to reset to 0 and line to increase by 1
                         case TokenType.NEWLINE:
-                            token = Token(TokenType.NEWLINE, NEWLINE, pos)
-                            self.line += 1
-                            self.column = -1
+                            token = Token.from_token_type(token_type, token_location)
+                            self._linenum += 1
+                            # we set column to -1 because it will be incremented to 0 after the token has been yielded
+                            self._column = -1
                         case _:
                             raise NoMatchFound
+                except ValueError:
+                    token = self._try_match_keyword_or_number(token_location)
+
             yield token
-            self.to_next_char()
+            self._to_next_char()
+
+        # we must always end our stream of tokens with an EOF token
         yield Token(
             TokenType.EOF,
             "",
-            Loc(filename, self.line, self.column, self.offset),
+            TokenLocation(filename, self._linenum, self._column, self._code_offset),
         )
+
+    def get_tokens(self) -> Iterator[Token]:
+        """
+        :return: an iterator over the tokens
+        """
+        t1, t2 = itertools.tee(self._token_iterable)
+        self._token_iterable = t1
+        return t2

@@ -19,7 +19,7 @@ def dump_tokens_to_stdout(tokens: list[Token]) -> None:
         ):
             continue
         print(
-            f"{colored(token.token_type.name.lower(), 'magenta')}\t\t{token.lexeme}\t\tLoc={token.pos}"
+            f"{colored(token.token_type.name.lower(), 'magenta')}\t\t{token.lexeme}\t\tLoc={token.loc}"
         )
 
 
@@ -36,7 +36,7 @@ def ep_entry(filename: str, dump_tokens: bool):
     with open(filename, "r") as f:
         source_code: str = f.read()
         processor = ExceptionProcessor(source_code, filename)
-        tokens = Tokenizer(source_code, processor).tokenize()
+        tokens = Tokenizer(source_code, processor)._tokenize()
         if dump_tokens:
             tokens, tokens_copy = itertools.tee(tokens)
             dump_tokens_to_stdout(list(tokens_copy))

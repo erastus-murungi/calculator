@@ -1,17 +1,16 @@
 import traceback
-from collections import namedtuple
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class Loc:
+class TokenLocation:
     filename: str
     line: int
     col: int
     offset: int
 
     def __str__(self):
-        return f"<{self.filename}:{self.line}:{self.line}>"
+        return f"<{self.filename}:{self.line}:{self.col}>"
 
 
 class ProcessingException(Exception):
@@ -24,7 +23,7 @@ class ExceptionProcessor:
         self.lines: list[str] = self.string.split("\n")
         self.filename = filename
 
-    def raise_exception(self, ob: object, loc: Loc, message: str):
+    def raise_exception(self, ob: object, loc: TokenLocation, message: str):
         line = self.lines[loc.line]
         try:
             raise ProcessingException(
