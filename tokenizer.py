@@ -35,7 +35,6 @@ class TokenType(Enum):
     FLOAT = "float"
     INT = "integer"
     WHITESPACE = "whitespace"
-    BOGUS = "undefined"
     EOF = "EOF"
 
     def __repr__(self):
@@ -60,10 +59,6 @@ class Token:
         """A convenient constructor to avoid the frequent pattern:
         Token(TokenType.X, TokenType.X.value, loc)"""
         return Token(token_type, token_type.value, loc)
-
-
-# A dummy token with its own bogus type and its own bogus location
-INVALID_TOKEN: Final[Token] = Token(TokenType.BOGUS, "", TokenLocation("", -1, -1, -1))
 
 
 def group(*choices):
