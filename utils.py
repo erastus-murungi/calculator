@@ -1,4 +1,13 @@
+import subprocess
+import sys
+
 from ast_nodes import Node, Operator
+
+
+FILENAME = "ast"
+AST_DOT_FILEPATH = FILENAME + "." + "dot"
+AST_GRAPH_TYPE = "pdf"
+AST_OUTPUT_FILENAME = FILENAME + "." + AST_GRAPH_TYPE
 
 
 def escape(s: str):
@@ -24,7 +33,7 @@ def escape(s: str):
 def graph_prologue():
     return (
         'digraph G {  graph [fontname = "Courier New"];\n'
-        + ' node [fontname = "Courier"];\n'
+        + ' node [fontname = "Courier", style = rounded];\n'
         + ' edge [fontname = "Courier"];'
     )
 
@@ -49,7 +58,7 @@ def print_ast(ast_nodes: list[Node]):
             node = stack.pop()
             if isinstance(node, Operator):
                 nodes.append(
-                    f'   {id(node)} [shape=circle, label="{escape(node.source())}"];'
+                    f'   {id(node)} [shape=doublecircle, style=filled, fillcolor=black, fontcolor=white, label="{escape(node.source())}"];'
                 )
             elif node.is_terminal():
                 nodes.append(
@@ -57,7 +66,7 @@ def print_ast(ast_nodes: list[Node]):
                 )
             else:
                 nodes.append(
-                    f'   {id(node)} [shape=record, style=filled, fillcolor=gray, label="<from_node>{escape(node.source())}"];'
+                    f'   {id(node)} [shape=record, style=filled, fillcolor=white, label="<from_node>{escape(node.source())}"];'
                 )
 
             for child in node.children():
@@ -69,5 +78,28 @@ def print_ast(ast_nodes: list[Node]):
         graph.extend(nodes)
         graph.append(graph_epilogue())
     graph.append(graph_epilogue())
-    with open("ast.dot", "w") as f:
+    with open(AST_DOT_FILEPATH, "w") as f:
         f.write("\n".join(graph))
+
+    create_graph_pdf()
+
+
+def create_graph_pdf(
+    dot_filepath=AST_DOT_FILEPATH,
+    output_filepath=AST_OUTPUT_FILENAME,
+    output_filetype=AST_GRAPH_TYPE,
+):
+    dot_exec_filepath = (
+        "/usr/local/bin/dot" if sys.platform == "darwin" else "/usr/bin/dot"
+    )
+    args = [
+        dot_exec_filepath,
+        f"-T{output_filetype}",
+        f"-Gdpi={96}",
+        dot_filepath,
+        "-o",
+        output_filepath,
+    ]
+    subprocess.run(args)
+    subprocess.run(["open", output_filepath])
+    subprocess.run(["rm", AST_DOT_FILEPATH])

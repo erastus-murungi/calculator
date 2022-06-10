@@ -331,7 +331,7 @@ class Exponent(BinaryOperator):
         return "^"
 
     def evaluate_with_operands(self, rhs, lhs):
-        return rhs ** lhs
+        return rhs**lhs
 
 
 @dataclass(frozen=True)
