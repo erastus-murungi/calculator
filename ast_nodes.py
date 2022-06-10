@@ -21,6 +21,9 @@ class Type(Enum):
 class Node(ABC):
     pos: Loc = field(repr=False)
 
+    def is_terminal(self):
+        return len(self.children()) == 0
+
     @abstractmethod
     def children(self) -> tuple["Node", ...]:
         pass
@@ -37,6 +40,10 @@ class Node(ABC):
 
     @abstractmethod
     def evaluate(self, types, env, exception_processor, exceptions, values):
+        pass
+
+    @abstractmethod
+    def source(self):
         pass
 
 
@@ -60,10 +67,16 @@ class Parenthesized(Expression):
         self.body.evaluate_type(types, env, exception_processor, exceptions)
         types[self] = types[self.body]
 
+    def source(self):
+        return f"{(self.body.source())}"
+
 
 @dataclass(frozen=True)
 class Value(Expression, ABC):
     literal: str
+
+    def source(self):
+        return f"{self.literal}"
 
     def __eq__(self, other):
         return self.literal.__eq__(other.literal)
@@ -164,6 +177,9 @@ class OctLiteral(IntLiteral):
 
 @dataclass(frozen=True)
 class Store(Node):
+    def source(self):
+        return f"let {self.id.source()} := {self.expr.source()}"
+
     def evaluate_type(self, types, env, exception_processor, exceptions):
         self.id.evaluate_type(types, env, exception_processor, exceptions)
         self.expr.evaluate_type(types, env, exception_processor, exceptions)
@@ -183,6 +199,9 @@ class Store(Node):
 
 @dataclass(frozen=True)
 class Load(Expression):
+    def source(self):
+        return self.id.source()
+
     def evaluate(self, types, env, exception_processor, exceptions, values):
         values[self] = values[self.id]
 
@@ -192,7 +211,7 @@ class Load(Expression):
     id: Value
 
     def children(self) -> Optional[tuple["Node", ...]]:
-        return (self.id,)
+        return ()
 
 
 class Operator(Node, ABC):
@@ -213,17 +232,26 @@ class UnaryOperator(Operator, ABC):
 
 
 class UnaryPlus(UnaryOperator):
+    def source(self):
+        return "+"
+
     def evaluate_with_operand(self, operand):
         return operand
 
 
 class UnarySub(UnaryOperator):
+    def source(self):
+        return "-"
+
     def evaluate_with_operand(self, operand):
         return -operand
 
 
 @dataclass(frozen=True)
 class UnaryOp(Expression):
+    def source(self):
+        return f"{self.op.source()} {self.operand.source()}"
+
     def evaluate(self, types, env, exception_processor, exceptions, values):
         self.operand.evaluate(types, env, exception_processor, exceptions, values)
         value = self.op.evaluate_with_operand(values[self.operand])
@@ -251,42 +279,66 @@ class BinaryOperator(Operator, ABC):
 
 
 class Add(BinaryOperator):
+    def source(self):
+        return "+"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs + lhs
 
 
 class Subtract(BinaryOperator):
+    def source(self):
+        return "-"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs - lhs
 
 
 class Multiply(BinaryOperator):
+    def source(self):
+        return "*"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs * lhs
 
 
 class Divide(BinaryOperator):
+    def source(self):
+        return "/"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs / lhs
 
 
 class FloorDivide(BinaryOperator):
+    def source(self):
+        return "//"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs // lhs
 
 
 class Modulus(BinaryOperator):
+    def source(self):
+        return "%"
+
     def evaluate_with_operands(self, rhs, lhs):
         return rhs % lhs
 
 
 class Exponent(BinaryOperator):
+    def source(self):
+        return "^"
+
     def evaluate_with_operands(self, rhs, lhs):
-        return rhs**lhs
+        return rhs ** lhs
 
 
 @dataclass(frozen=True)
 class BinaryOp(Expression):
+    def source(self):
+        return f"{self.left.source()} {self.op.source()} {self.right.source()}"
+
     def evaluate(self, types, env, exception_processor, exceptions, values):
         self.left.evaluate(types, env, exception_processor, exceptions, values)
         self.right.evaluate(types, env, exception_processor, exceptions, values)
@@ -309,7 +361,7 @@ class BinaryOp(Expression):
             types[self] = types[self.left]
 
     def children(self) -> Optional[tuple["Node", ...]]:
-        return self.op, self.left, self.right
+        return self.left, self.op, self.right
 
     op: BinaryOperator
     left: Expression
@@ -318,6 +370,9 @@ class BinaryOp(Expression):
 
 @dataclass(frozen=True)
 class FunctionCall(Expression):
+    def source(self):
+        return f"{self.name} ({', '.join([arg.source() for arg in self.arguments])})"
+
     def children(self) -> Optional[tuple["Node", ...]]:
         return self.body.children()
 
@@ -365,6 +420,9 @@ class FunctionDef(Node):
     name: str
     parameters: tuple[RValue, ...]
     body: Expression
+
+    def source(self):
+        return f"{self.name} ({', '.join([arg.source() for arg in self.parameters])}) := {self.body.source()}"
 
     def evaluate_type(self, types, env, exception_processor, exceptions):
         types[self] = Type.Undefined

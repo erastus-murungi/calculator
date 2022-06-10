@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Final
 import re
 
 from exc_processor import Loc, ExceptionProcessor
@@ -10,58 +10,51 @@ class NoMatchFound(Exception):
     pass
 
 
-# define a binding
-LET = "let"
-# left parenthesis
+LET = "let"  # define a binding
 L_PAR = "("
 R_PAR = ")"
-SUBTRACT = "-"
+
+# arithmetic operators
 ADD = "+"
-COMMA = ","
+SUBTRACT = "-"
+MULTIPLY = "*"
 DIVIDE = "/"
 MODULUS = "%"
 EXPONENT = "^"
-FLOAT = "float"
-INT = "integer"
-COMPLEX = "complex"
-MULTIPLY = "*"
+COMMA = ","
+COMPLEX = "complex"  # used to define a complex number
 F_DIV = "//"
 DEFINE = ":="
 FUNCTION = "func"
-HEX = "hex"
-ABS = "abs"
-ID = "id"
-INF = "inf"
-NAN = "nan"
 NEWLINE = "\n"
 CONTINUATION = "\\n"
 
 
 class TokenType(Enum):
-    LET = "let"
+    LET = "bind"  # define a binding
     L_PAR = "("
     R_PAR = ")"
-    SUBTRACT = "-"
+
+    # arithmetic operators
     ADD = "+"
+    SUBTRACT = "-"
+    MULTIPLY = "*"
     DIVIDE = "/"
     MODULUS = "%"
     EXPONENT = "^"
+    COMMA = ","
+    COMPLEX = "complex"  # used to define a complex number
+    F_DIV = "//"
+    DEFINE = ":="
+    FUNCTION = "func"
+    NEWLINE = "\n"
+    CONTINUATION = "\\n"
+    ID = "identifier"
     FLOAT = "float"
     INT = "integer"
-    HEX = "hex"
-    COMPLEX = "complex"
-    MULTIPLY = "*"
-    F_DIV = "//"
-    COMMA = ","
-    DEFINE = ":="
     WHITESPACE = "whitespace"
-    NEWLINE = "\n"
-    UNDEFINED = "undefined"
-    ABS = "abs"
-    CONJUGATE = "conjugate"
-    ID = "id"
+    BOGUS = "undefined"
     EOF = "EOF"
-    FUNCTION = "func"
 
     def __repr__(self):
         return self.name
@@ -69,12 +62,20 @@ class TokenType(Enum):
 
 @dataclass
 class Token:
+    """
+    A token has three components:
+    1) Its type
+    2) A lexeme -- the substring of the source code it represents
+    3) The location in code of the lexeme
+    """
+
     token_type: TokenType
     lexeme: str
     pos: Loc
 
 
-INVALID_TOKEN = Token(TokenType.UNDEFINED, "", Loc("", -1, -1, -1))
+# A dummy token with its own bogus type and its own bogus location
+INVALID_TOKEN: Final[Token] = Token(TokenType.BOGUS, "", Loc("", -1, -1, -1))
 
 
 def group(*choices):
@@ -89,6 +90,7 @@ def maybe(*choices):
     return group(*choices) + "?"
 
 
+# Regular expressions used to parse numbers
 Hexnumber = r"0[xX](?:_?[0-9a-fA-F])+"
 Binnumber = r"0[bB](?:_?[01])+"
 Octnumber = r"0[oO](?:_?[0-7])+"
@@ -112,11 +114,11 @@ class Tokenizer:
         self.column = 0
         self.offset = 0
 
-    def increment(self):
+    def to_next_char(self):
         self.offset += 1
         self.column += 1
 
-    def increment_by(self, n):
+    def skip_n_chars(self, n):
         self.offset += n
         self.column += n
 
@@ -148,12 +150,6 @@ class Tokenizer:
                 return LET, TokenType.LET
             if re_match == FUNCTION:
                 return FUNCTION, TokenType.FUNCTION
-            if re_match == ABS:
-                return ABS, TokenType.ABS
-            if re_match == INF:
-                return INF, TokenType.FLOAT
-            if re_match == NAN:
-                return FLOAT, TokenType.FLOAT
             return re_match, TokenType.ID
         return None
 
@@ -168,26 +164,28 @@ class Tokenizer:
             raise NoMatchFound
         else:
             lexeme, ret_type = ret
-            self.increment_by(len(lexeme) - 1)
+            self.skip_n_chars(len(lexeme) - 1)
             return Token(ret_type, lexeme, pos)
 
     def current_char(self):
         return self.string[self.offset]
 
+    def remaining_untokenized_code(self):
+        return self.string[self.offset :]
+
     def tokenize(self) -> Iterator[Token]:
+        filename = self.exception_processor.filename
         while self.offset < len(self.string):
-            pos = Loc(
-                self.exception_processor.filename, self.line, self.column, self.offset
-            )
-            if self.string[self.offset :].startswith(F_DIV):
+            pos = Loc(filename, self.line, self.column, self.offset)
+            if self.remaining_untokenized_code().startswith(F_DIV):
                 token = Token(TokenType.F_DIV, F_DIV, pos)
-                self.increment()
-            elif self.string[self.offset :].startswith(DEFINE):
+                self.to_next_char()
+            elif self.remaining_untokenized_code().startswith(DEFINE):
                 token = Token(TokenType.DEFINE, DEFINE, pos)
-                self.increment()
-            elif self.string[self.offset :].startswith(CONTINUATION):
+                self.to_next_char()
+            elif self.remaining_untokenized_code().startswith(CONTINUATION):
                 token = Token(TokenType.WHITESPACE, CONTINUATION, pos)
-                self.increment()
+                self.to_next_char()
             elif self.current_char() != NEWLINE and self.current_char().isspace():
                 token = Token(TokenType.WHITESPACE, self.current_char(), pos)
             else:
@@ -220,9 +218,9 @@ class Tokenizer:
                         case _:
                             raise NoMatchFound
             yield token
-            self.increment()
+            self.to_next_char()
         yield Token(
             TokenType.EOF,
             "",
-            Loc(self.exception_processor.filename, self.line, self.column, self.offset),
+            Loc(filename, self.line, self.column, self.offset),
         )

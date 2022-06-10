@@ -14,7 +14,7 @@ class Parser:
         )
         self.pos = 0
         self.functions: dict[str, FunctionDef] = {}
-        self.root: list[Node] = self.parse()
+        self.nodes: list[Node] = self.parse()
 
     def get_current_token(self):
         return self.tokens[self.pos]
@@ -23,7 +23,7 @@ class Parser:
         self.pos += 1
 
     def get_current_token_type(self):
-        return self.tokens[self.pos].token_type
+        return self.get_current_token().token_type
 
     def consume_token(self, expected_type: TokenType, message: str = "") -> Token:
         if self.get_current_token_type() != expected_type:
