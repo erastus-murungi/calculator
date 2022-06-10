@@ -3,18 +3,21 @@ from enum import Enum
 from typing import Optional, Iterator
 import re
 
-from exc_processor import Pos, ExceptionProcessor
+from exc_processor import Loc, ExceptionProcessor
 
 
 class NoMatchFound(Exception):
     pass
 
 
+# define a binding
 LET = "let"
+# left parenthesis
 L_PAR = "("
 R_PAR = ")"
 SUBTRACT = "-"
 ADD = "+"
+COMMA = ","
 DIVIDE = "/"
 MODULUS = "%"
 EXPONENT = "^"
@@ -24,6 +27,7 @@ COMPLEX = "complex"
 MULTIPLY = "*"
 F_DIV = "//"
 DEFINE = ":="
+FUNCTION = "func"
 HEX = "hex"
 ABS = "abs"
 ID = "id"
@@ -48,6 +52,7 @@ class TokenType(Enum):
     COMPLEX = "complex"
     MULTIPLY = "*"
     F_DIV = "//"
+    COMMA = ","
     DEFINE = ":="
     WHITESPACE = "whitespace"
     NEWLINE = "\n"
@@ -56,6 +61,7 @@ class TokenType(Enum):
     CONJUGATE = "conjugate"
     ID = "id"
     EOF = "EOF"
+    FUNCTION = "func"
 
     def __repr__(self):
         return self.name
@@ -65,17 +71,17 @@ class TokenType(Enum):
 class Token:
     token_type: TokenType
     lexeme: str
-    pos: Pos
+    pos: Loc
 
 
-INVALID_TOKEN = Token(TokenType.UNDEFINED, "", None)
+INVALID_TOKEN = Token(TokenType.UNDEFINED, "", Loc("", -1, -1, -1))
 
 
 def group(*choices):
     return "(" + "|".join(choices) + ")"
 
 
-def any(*choices):
+def reg_any(*choices):
     return group(*choices) + "*"
 
 
@@ -140,6 +146,8 @@ class Tokenizer:
             re_match = re_match.group(0)
             if re_match == LET:
                 return LET, TokenType.LET
+            if re_match == FUNCTION:
+                return FUNCTION, TokenType.FUNCTION
             if re_match == ABS:
                 return ABS, TokenType.ABS
             if re_match == INF:
@@ -168,7 +176,9 @@ class Tokenizer:
 
     def tokenize(self) -> Iterator[Token]:
         while self.offset < len(self.string):
-            pos = Pos(self.line, self.column, self.offset)
+            pos = Loc(
+                self.exception_processor.filename, self.line, self.column, self.offset
+            )
             if self.string[self.offset :].startswith(F_DIV):
                 token = Token(TokenType.F_DIV, F_DIV, pos)
                 self.increment()
@@ -201,6 +211,8 @@ class Tokenizer:
                             token = Token(TokenType.MULTIPLY, MULTIPLY, pos)
                         case TokenType.EXPONENT:
                             token = Token(TokenType.EXPONENT, EXPONENT, pos)
+                        case TokenType.COMMA:
+                            token = Token(TokenType.COMMA, COMMA, pos)
                         case TokenType.NEWLINE:
                             token = Token(TokenType.NEWLINE, NEWLINE, pos)
                             self.line += 1
@@ -209,4 +221,8 @@ class Tokenizer:
                             raise NoMatchFound
             yield token
             self.increment()
-        yield Token(TokenType.EOF, "", Pos(self.line, self.column, self.offset))
+        yield Token(
+            TokenType.EOF,
+            "",
+            Loc(self.exception_processor.filename, self.line, self.column, self.offset),
+        )

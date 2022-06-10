@@ -1,9 +1,9 @@
 import re
 
-from ast_nodes import Node, Store
-from semantic_checker import SemanticChecker
 from termcolor import colored
 
+from ast_nodes import Node
+from semantic_checker import SemanticChecker
 from tokenizer import Floatnumber, Name, Intnumber, group
 
 
@@ -38,7 +38,7 @@ def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]):
 def format_line(line):
     def color_num(matchobj):
         num = matchobj.group(0)
-        if '.' in num:
+        if "." in num:
             pass
         return colored(matchobj.group(0), "yellow")
 

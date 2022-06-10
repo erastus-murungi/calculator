@@ -13,7 +13,8 @@ class Parser:
             filter(lambda token: token.token_type != TokenType.WHITESPACE, tokens)
         )
         self.pos = 0
-        self.root = self.parse()
+        self.functions: dict[str, FunctionDef] = {}
+        self.root: list[Node] = self.parse()
 
     def get_current_token(self):
         return self.tokens[self.pos]
@@ -24,12 +25,11 @@ class Parser:
     def get_current_token_type(self):
         return self.tokens[self.pos].token_type
 
-    def consume_token(self, expected_type: TokenType) -> Token:
+    def consume_token(self, expected_type: TokenType, message: str = "") -> Token:
         if self.get_current_token_type() != expected_type:
-            if (
-                self.get_current_token() == TokenType.LET
-            ) and expected_type == TokenType.ID:
-                raise ValueError("cant declare binding with reserved keyword let")
+            raise ValueError(
+                f"expected {expected_type.value} got {self.get_current_token_type().value} : {message}"
+            )
         token = self.get_current_token()
         self.advance()
         return token
@@ -91,34 +91,45 @@ class Parser:
             return BinaryOp(base.pos, Exponent(op_offset), base, power)
         return base
 
+    def parse_num_literal(self):
+        if self.get_current_token_type() == TokenType.INT:
+            return self.parse_int_literal()
+        else:
+            return self.parse_float_literal()
+
     def parse_expr(self):
         match self.get_current_token_type():
             case TokenType.ADD | TokenType.SUBTRACT:
                 return self.parse_unary_op_expr()
             case TokenType.L_PAR:
                 return self.parse_parenthesized_expression()
-            case TokenType.INT:
-                return self.parse_int_literal()
-            case TokenType.FLOAT:
-                return self.parse_float()
+            case TokenType.INT | TokenType.FLOAT:
+                return self.parse_num_literal()
             case TokenType.ID:
-                return self.parse_load()
+                return self.parse_load_or_function_call()
         raise ValueError
 
     def parse_store(self):
         """This is the only type of statement allowed by the program"""
-        pos: Pos = self.consume_token(TokenType.LET).pos
-        var: Token = self.consume_token(TokenType.ID)
-        self.consume_token(TokenType.DEFINE)
+        pos: Loc = self.consume_token(TokenType.LET, "expected let keyword").pos
+        var: Token = self.consume_token(TokenType.ID, "expected an identifier")
+        self.consume_token(TokenType.DEFINE, "expected :=")
         expr: Expression = self.parse_expr_entry()
-        return Store(pos, Declaration(var.pos, var.lexeme), expr)
+        return Store(pos, RValue(var.pos, var.lexeme), expr)
 
-    def parse_load(self):
+    def parse_load_or_function_call(self):
         token = self.consume_token_no_check()
-        return Load(token.pos, Declaration(token.pos, token.lexeme))
+        if self.get_current_token_type() == TokenType.L_PAR:
+            return self.parse_function_call(token.lexeme)
+        return Load(token.pos, RValue(token.pos, token.lexeme))
+
+    def parse_function_call(self, func_name: str):
+        funcdef = self.functions[func_name]
+        pos, args = self.parse_args_or_params(is_parameter=False)
+        return FunctionCall(pos, func_name, args, funcdef.body)
 
     def parse_int_literal(self):
-        int_literal = self.consume_token(TokenType.INT)
+        int_literal = self.consume_token(TokenType.INT, "expected an int literal")
         offset = int_literal.pos
         lexeme = int_literal.lexeme
         if lexeme.startswith("0b") or lexeme.startswith("0B"):
@@ -135,6 +146,8 @@ class Parser:
         while self.get_current_token_type() != TokenType.EOF:
             if self.get_current_token_type() == TokenType.LET:
                 nodes.append(self.parse_store())
+            elif self.get_current_token_type() == TokenType.FUNCTION:
+                nodes.append(self.parse_function_definition())
             else:
                 nodes.append(self.parse_expr_entry())
         return nodes
@@ -142,7 +155,7 @@ class Parser:
     def parse_parenthesized_expression(self):
         token = self.consume_token_no_check()
         expression = self.parse_exponent()
-        self.consume_token(TokenType.R_PAR)
+        self.consume_token(TokenType.R_PAR, "expected (")
         return Parenthesized(token.pos, body=expression)
 
     def parse_unary_op_expr(self):
@@ -154,6 +167,42 @@ class Parser:
             return UnaryOp(token.pos, UnarySub(token.pos), expression)
         raise ValueError
 
-    def parse_float(self):
-        token = self.consume_token_no_check()
+    def parse_float_literal(self):
+        token = self.consume_token(TokenType.FLOAT, "expected float")
         return FloatLiteral(token.pos, token.lexeme, float(token.lexeme))
+
+    def parse_args_or_params(
+        self, is_parameter: bool
+    ) -> tuple[Loc, tuple[RValue | LValue]]:
+        parameters_or_args: list[RValue | LValue] = []
+        pos = self.consume_token(TokenType.L_PAR, "expected left param").pos
+        while self.get_current_token_type() != TokenType.R_PAR:
+            if self.get_current_token_type() == TokenType.COMMA:
+                self.consume_token(TokenType.COMMA, "expected a comma")
+            if is_parameter:
+                param_token = self.consume_token(
+                    TokenType.ID, "expected a parameter name"
+                )
+                parameters_or_args.append(RValue(param_token.pos, param_token.lexeme))
+            else:
+                num_literal_token = self.parse_num_literal()
+                parameters_or_args.append(num_literal_token)
+            if (
+                self.get_current_token_type() == TokenType.COMMA
+                or self.get_current_token_type() == TokenType.R_PAR
+            ):
+                continue
+            raise ValueError(f"unexpected token type: {self.get_current_token_type()}")
+        self.consume_token(TokenType.R_PAR)
+        return pos, tuple(parameters_or_args)
+
+    def parse_function_definition(self):
+        self.consume_token(TokenType.FUNCTION, "expected the keyword func")
+        function_name = self.consume_token(TokenType.ID, "expected the function name")
+        pos, parameters = self.parse_args_or_params(is_parameter=True)
+        self.consume_token(TokenType.DEFINE, "expected a define")
+        func_def = FunctionDef(
+            pos, function_name.lexeme, parameters, self.parse_expr_entry()
+        )
+        self.functions[function_name.lexeme] = func_def
+        return func_def

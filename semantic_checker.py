@@ -1,14 +1,13 @@
 import sys
-import traceback
 from dataclasses import dataclass
 from typing import Optional
 
-from ast_nodes import Expression, Store, Node, Declaration
+from ast_nodes import Expression, Store, Node, FunctionDef, RValue
 from exc_processor import ExceptionProcessor, ProcessingException
 
 
 @dataclass
-class Env(dict[str, Expression]):
+class Env(set[str, ...]):
     parent: Optional["Env"] = None
     child: Optional["Env"] = None
 
@@ -30,7 +29,9 @@ class Env(dict[str, Expression]):
 
 class SemanticChecker:
     def __init__(
-        self, nodes: list[Store | Expression], exception_processor: ExceptionProcessor
+        self,
+        nodes: list[Node],
+        exception_processor: ExceptionProcessor,
     ):
         self.exception_processor = exception_processor
         self.exceptions: list[ProcessingException] = []
@@ -48,28 +49,34 @@ class SemanticChecker:
 
     @staticmethod
     def populate_env(
-        nodes: list[Store | Expression],
+        nodes: list[Node],
     ) -> dict[Node, Env]:
         env = Env()
         node_to_env = {}
         seen = set()
         for node in nodes:
             if isinstance(node, Store):
-                if node.id.var in seen:
+                if node.id.literal in seen:
                     raise ValueError("redeclared binding")
-                seen.add(node.id.var)
-                env[node.id.var] = node.expr
+                seen.add(node.id.literal)
+                env.add(node.id.literal)
+                env = env.add_child()
+            elif isinstance(node, FunctionDef):
+                for param in node.parameters:
+                    env.add(param.literal)
+                    node_to_env[param] = env
+                    env = env.add_child()
                 env = env.add_child()
             elif not isinstance(node, Expression):
-                raise ValueError
+                raise ValueError(node)
             node_to_env[node] = env
         return node_to_env
 
     def check_scope(self, nodes):
         def _check_scope_for_node(node: Node, env: dict[str, Expression]):
-            if isinstance(node, Declaration):
-                if node.var not in env:
-                    raise ValueError(f"binding '{node.var}' not defined")
+            if isinstance(node, RValue):
+                if node.literal not in env:
+                    raise ValueError(f"binding '{node.literal}' not defined")
             if node.children() is not None:
                 children: tuple[Node, ...] = node.children()
                 for child in children:

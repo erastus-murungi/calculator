@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from exc_processor import Pos, ExceptionProcessor
+from exc_processor import Loc, ExceptionProcessor
 
 
 class Type(Enum):
@@ -19,10 +19,10 @@ class Type(Enum):
 
 @dataclass(frozen=True)
 class Node(ABC):
-    pos: Pos = field(repr=False)
+    pos: Loc = field(repr=False)
 
     @abstractmethod
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple["Node", ...]:
         pass
 
     @abstractmethod
@@ -62,36 +62,88 @@ class Parenthesized(Expression):
 
 
 @dataclass(frozen=True)
-class NumLiteral(Expression, ABC):
+class Value(Expression, ABC):
     literal: str
+
+    def __eq__(self, other):
+        return self.literal.__eq__(other.literal)
 
 
 @dataclass(frozen=True)
-class FloatLiteral(NumLiteral):
+class RValue(Value):
+    def children(self) -> tuple[Node, ...]:
+        return ()
+
+    def evaluate_type(
+        self,
+        types: dict["Node", Type],
+        env: dict[str, "Expression"],
+        exception_processor: ExceptionProcessor,
+        exceptions: list[Exception],
+    ):
+        pass
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        pass
+
+    def __eq__(self, other):
+        return self.literal.__eq__(other.literal)
+
+
+@dataclass(frozen=True)
+class RValue(Value):
+    def evaluate_type(self, types, env, exception_processor, exceptions):
+        types[self] = Type.Undefined
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        values[self] = None
+
+    def children(self):
+        return ()
+
+
+@dataclass(frozen=True)
+class LValue(Value, ABC):
+    @staticmethod
+    @abstractmethod
+    def get_type() -> Type:
+        pass
+
+
+@dataclass(frozen=True)
+class FloatLiteral(LValue):
+    @staticmethod
+    def get_type() -> Type:
+        return Type.Float
+
     def evaluate(self, types, env, exception_processor, exceptions, values):
         values[self] = self.raw_value
 
     def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Float
+        types[self] = FloatLiteral.get_type()
 
     def children(self):
-        return None
+        return ()
 
     raw_value: float
 
 
 @dataclass(frozen=True)
-class IntLiteral(NumLiteral, ABC):
+class IntLiteral(LValue, ABC):
     raw_value: int
 
     def children(self):
-        return None
+        return ()
 
     def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Integer
+        types[self] = IntLiteral.get_type()
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
         values[self] = self.raw_value
+
+    @staticmethod
+    def get_type() -> Type:
+        return Type.Integer
 
 
 class DecimalLiteral(IntLiteral):
@@ -111,20 +163,6 @@ class OctLiteral(IntLiteral):
 
 
 @dataclass(frozen=True)
-class Declaration(Node):
-    def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Undefined
-
-    def evaluate(self, types, env, exception_processor, exceptions, values):
-        values[self] = None
-
-    var: str
-
-    def children(self):
-        return None
-
-
-@dataclass(frozen=True)
 class Store(Node):
     def evaluate_type(self, types, env, exception_processor, exceptions):
         self.id.evaluate_type(types, env, exception_processor, exceptions)
@@ -134,8 +172,9 @@ class Store(Node):
     def evaluate(self, types, env, exception_processor, exceptions, values):
         self.expr.evaluate(types, env, exception_processor, exceptions, values)
         values[self] = None
+        values[self.id] = values[self.expr]
 
-    id: Declaration
+    id: RValue
     expr: Expression
 
     def children(self):
@@ -145,12 +184,12 @@ class Store(Node):
 @dataclass(frozen=True)
 class Load(Expression):
     def evaluate(self, types, env, exception_processor, exceptions, values):
-        values[self] = values[env[self.id.var]]
+        values[self] = values[self.id]
 
     def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = types[env[self.id.var]]
+        types[self] = Type.Undefined
 
-    id: Declaration
+    id: Value
 
     def children(self) -> Optional[tuple["Node", ...]]:
         return (self.id,)
@@ -158,7 +197,7 @@ class Load(Expression):
 
 class Operator(Node, ABC):
     def children(self) -> Optional[tuple["Node", ...]]:
-        return None
+        return ()
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
         values[self] = None
@@ -243,7 +282,7 @@ class Modulus(BinaryOperator):
 
 class Exponent(BinaryOperator):
     def evaluate_with_operands(self, rhs, lhs):
-        return rhs ** lhs
+        return rhs**lhs
 
 
 @dataclass(frozen=True)
@@ -275,3 +314,63 @@ class BinaryOp(Expression):
     op: BinaryOperator
     left: Expression
     right: Expression
+
+
+@dataclass(frozen=True)
+class FunctionCall(Expression):
+    def children(self) -> Optional[tuple["Node", ...]]:
+        return self.body.children()
+
+    name: str
+    arguments: tuple[LValue, ...]
+    body: Expression
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        return self.body.evaluate(types, env, exception_processor, exceptions, values)
+
+    def get_all_l_values(self):
+        def recurse_on_children(node):
+            children = node.children()
+            return children + tuple(map(recurse_on_children, children))
+
+        return tuple(
+            filter(lambda n: isinstance(n, LValue), recurse_on_children(self.body))
+        )
+
+    @staticmethod
+    def all_same_type(elements):
+        return all(isinstance(sub, type(elements[0])) for sub in elements[1:])
+
+    def evaluate_type(self, types, env, exception_processor, exceptions):
+        _type = Type.Undefined
+        all_constants = self.get_all_l_values()
+        if all_constants:
+            if not self.all_same_type(all_constants):
+                raise ValueError()
+            else:
+                _type = all_constants[0].get_type()
+        if self.arguments:
+            if not self.all_same_type(self.arguments):
+                raise ValueError()
+            else:
+                type_args = self.arguments[0].get_type()
+                if _type != Type.Undefined and type_args != _type:
+                    raise ValueError
+                _type = type_args
+        return _type
+
+
+@dataclass(frozen=True)
+class FunctionDef(Node):
+    name: str
+    parameters: tuple[RValue, ...]
+    body: Expression
+
+    def evaluate_type(self, types, env, exception_processor, exceptions):
+        types[self] = Type.Undefined
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        values[self] = None
+
+    def children(self) -> Optional[tuple["Node", ...]]:
+        return self.body.children()
