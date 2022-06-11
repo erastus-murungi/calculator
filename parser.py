@@ -128,7 +128,7 @@ class Parser:
     def parse_function_call(self, func_name: str):
         funcdef = self.functions[func_name]
         pos, args = self.parse_args_or_params(is_parameter=False)
-        return FunctionCall(pos, func_name, args, funcdef.body)
+        return FunctionCall(pos, funcdef, args)
 
     def parse_int_literal(self):
         int_literal = self.consume_token(TokenType.INT, "expected an int literal")

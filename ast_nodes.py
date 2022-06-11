@@ -19,7 +19,7 @@ class Type(Enum):
 
 @dataclass(frozen=True)
 class Node(ABC):
-    pos: TokenLocation = field(repr=False)
+    pos: TokenLocation = field(repr=False, hash=False)
 
     def is_terminal(self):
         return len(self.children()) == 0
@@ -71,18 +71,15 @@ class Parenthesized(Expression):
         return f"{(self.body.source())}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, unsafe_hash=True)
 class Value(Expression, ABC):
     literal: str
 
     def source(self):
         return f"{self.literal}"
 
-    def __eq__(self, other):
-        return self.literal.__eq__(other.literal)
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class RValue(Value):
     def children(self) -> tuple[Node, ...]:
         return ()
@@ -100,10 +97,10 @@ class RValue(Value):
         pass
 
     def __eq__(self, other):
-        return self.literal.__eq__(other.literal)
+        return self.literal.__eq__(self.literal)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, unsafe_hash=True, eq=False)
 class RValue(Value):
     def evaluate_type(self, types, env, exception_processor, exceptions):
         types[self] = Type.Undefined
@@ -113,6 +110,9 @@ class RValue(Value):
 
     def children(self):
         return ()
+
+    def __eq__(self, other):
+        return self.literal == other.literal
 
 
 @dataclass(frozen=True)
@@ -184,6 +184,7 @@ class Store(Node):
         self.id.evaluate_type(types, env, exception_processor, exceptions)
         self.expr.evaluate_type(types, env, exception_processor, exceptions)
         types[self] = Type.Undefined
+        types[self.id] = types[self.expr]
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
         self.expr.evaluate(types, env, exception_processor, exceptions, values)
@@ -206,7 +207,7 @@ class Load(Expression):
         values[self] = values[self.id]
 
     def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Undefined
+        types[self] = types[self.id]
 
     id: Value
 
@@ -269,7 +270,7 @@ class UnaryOp(Expression):
         return self.op, self.operand
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, )
 class BinaryOperator(Operator, ABC):
     pass
 
@@ -369,19 +370,41 @@ class BinaryOp(Expression):
 
 
 @dataclass(frozen=True)
-class FunctionCall(Expression):
+class FunctionDef(Node):
+    name: str
+    parameters: tuple[RValue, ...]
+    body: Expression
+
     def source(self):
-        return f"{self.name} ({', '.join([arg.source() for arg in self.arguments])})"
+        return f"{self.name} ({', '.join([arg.source() for arg in self.parameters])}) := {self.body.source()}"
+
+    def evaluate_type(self, types, env, exception_processor, exceptions):
+        types[self] = Type.Undefined
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        values[self] = None
 
     def children(self) -> Optional[tuple["Node", ...]]:
         return self.body.children()
 
-    name: str
+
+@dataclass(frozen=True)
+class FunctionCall(Expression):
+    def source(self):
+        return f"{self.function_def.name} ({', '.join([arg.source() for arg in self.arguments])})"
+
+    def children(self) -> Optional[tuple["Node", ...]]:
+        return self.function_def.body.children()
+
+    function_def: FunctionDef
     arguments: tuple[LValue, ...]
-    body: Expression
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
-        return self.body.evaluate(types, env, exception_processor, exceptions, values)
+        for param, arg in zip(self.function_def.parameters, self.arguments):
+            arg.evaluate(types, env, exception_processor, exceptions, values)
+            values[param] = values[arg]
+        self.function_def.body.evaluate(types, env, exception_processor, exceptions, values)
+        values[self] = values[self.function_def.body]
 
     def get_all_l_values(self):
         def recurse_on_children(node):
@@ -389,7 +412,7 @@ class FunctionCall(Expression):
             return children + tuple(map(recurse_on_children, children))
 
         return tuple(
-            filter(lambda n: isinstance(n, LValue), recurse_on_children(self.body))
+            filter(lambda n: isinstance(n, LValue), recurse_on_children(self.function_def.body))
         )
 
     @staticmethod
@@ -413,22 +436,3 @@ class FunctionCall(Expression):
                     raise ValueError
                 _type = type_args
         return _type
-
-
-@dataclass(frozen=True)
-class FunctionDef(Node):
-    name: str
-    parameters: tuple[RValue, ...]
-    body: Expression
-
-    def source(self):
-        return f"{self.name} ({', '.join([arg.source() for arg in self.parameters])}) := {self.body.source()}"
-
-    def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Undefined
-
-    def evaluate(self, types, env, exception_processor, exceptions, values):
-        values[self] = None
-
-    def children(self) -> Optional[tuple["Node", ...]]:
-        return self.body.children()

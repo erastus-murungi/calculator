@@ -1,13 +1,14 @@
 import re
+from typing import Optional
 
 from termcolor import colored
 
 from ast_nodes import Node
 from semantic_checker import SemanticChecker
-from tokenizer import Floatnumber, Name, Intnumber, group
+from tokenizer import Name
 
 
-def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]):
+def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]) -> list[Optional[float]]:
     results = []
     values = {}
     for node in nodes:
@@ -25,31 +26,25 @@ def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]):
         lines.append(
             format_line(semantic_checker.exception_processor.lines[node.pos.line])
         )
-    max_length = max(map(len, lines))
     for node, line in zip(nodes, lines):
         val = values[node]
         print(
-            f"{node.pos.line:<3}{line.ljust(max_length): >10} {colored('' if val is None else val, 'green')}"
+            f"In [{colored(str(node.pos.line), 'green', attrs=['bold'])}]: {line}"
         )
+        if val:
+            print(
+                f"Out[{colored(str(node.pos.line), 'magenta', attrs=['bold'])}]: => {colored(str(val), 'blue', attrs=['bold'])}"
+            )
 
     return results
 
 
 def format_line(line):
-    def color_num(matchobj):
-        num = matchobj.group(0)
-        if "." in num:
-            pass
-        return colored(matchobj.group(0), "yellow")
-
     def color_name(matchobj):
-        if not matchobj.group(0)[0].isdigit():
-            if (matchobj.group(0)) != "let":
-                return colored(matchobj.group(0), "blue")
-            else:
-                return colored(matchobj.group(0), "magenta")
+        text = matchobj.group(0)
+        if text == "let" or text == "func":
+            return colored(matchobj.group(0), 'green', attrs=['bold'])
         return matchobj.group(0)
 
-    line = re.sub(group(Intnumber, Floatnumber), color_num, line)
     line = re.sub(Name, color_name, line)
     return line

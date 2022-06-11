@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+
 import itertools
 from pprint import pprint
 
 import utils
-from exc_processor import ExceptionProcessor
+from ast_nodes import RValue
+from exc_processor import ExceptionProcessor, TokenLocation
 from parser import Parser
 from semantic_checker import SemanticChecker
 from tokenizer import Tokenizer, Token, TokenType
@@ -31,28 +34,28 @@ def dump_tokens_to_stdout(tokens: list[Token]) -> None:
     default=False,
     help="Tokenize source code and print out the tokens",
 )
+@click.option(
+    "--view-ast-dot",
+    "-a",
+    is_flag="True",
+    default=False,
+    help="Generate a dot file and convert to a pdf with AST graphs",
+)
 @click.argument("filename")
-def ep_entry(filename: str, dump_tokens: bool):
+def ep_entry(filename: str, dump_tokens: bool, view_ast_dot: bool):
     with open(filename, "r") as f:
         source_code: str = f.read()
         processor = ExceptionProcessor(source_code, filename)
-        tokens = Tokenizer(source_code, processor)._tokenize()
+        tokens = Tokenizer(source_code, processor).get_tokens()
         if dump_tokens:
             tokens, tokens_copy = itertools.tee(tokens)
             dump_tokens_to_stdout(list(tokens_copy))
-
         parser = Parser(tokens, processor)
-        utils.print_ast(parser.nodes)
+        if view_ast_dot:
+            utils.print_ast(parser.nodes)
+        semantic_checker = SemanticChecker(parser.nodes, processor)
+        values = evaluate(semantic_checker, parser.nodes)
 
 
 if __name__ == "__main__":
     ep_entry()
-    # processor = ExceptionProcessor(to_eval)
-    # tokenizer = Tokenizer(to_eval, processor)
-    # parser = Parser(tokenizer.tokenize(), processor)
-    # semantic_checker = SemanticChecker(parser.root, processor)
-    # values = evaluate(semantic_checker, parser.root)
-
-    # pprint(tuple(semantic_checker.node_to_env.items()))
-    # pprint(parser.root)
-    # pprint(semantic_checker.node_types)
