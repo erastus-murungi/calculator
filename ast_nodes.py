@@ -68,7 +68,7 @@ class Parenthesized(Expression):
         types[self] = types[self.body]
 
     def source(self):
-        return f"{(self.body.source())}"
+        return f"({self.body.source()})"
 
 
 @dataclass(frozen=True, unsafe_hash=True)
@@ -103,7 +103,7 @@ class RValue(Value):
 @dataclass(frozen=True, unsafe_hash=True, eq=False)
 class RValue(Value):
     def evaluate_type(self, types, env, exception_processor, exceptions):
-        types[self] = Type.Undefined
+        pass
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
         values[self] = None
@@ -270,7 +270,9 @@ class UnaryOp(Expression):
         return self.op, self.operand
 
 
-@dataclass(frozen=True, )
+@dataclass(
+    frozen=True,
+)
 class BinaryOperator(Operator, ABC):
     pass
 
@@ -397,13 +399,15 @@ class FunctionCall(Expression):
         return self.function_def.body.children()
 
     function_def: FunctionDef
-    arguments: tuple[LValue, ...]
+    arguments: tuple[Value, ...]
 
     def evaluate(self, types, env, exception_processor, exceptions, values):
         for param, arg in zip(self.function_def.parameters, self.arguments):
             arg.evaluate(types, env, exception_processor, exceptions, values)
             values[param] = values[arg]
-        self.function_def.body.evaluate(types, env, exception_processor, exceptions, values)
+        self.function_def.body.evaluate(
+            types, env, exception_processor, exceptions, values
+        )
         values[self] = values[self.function_def.body]
 
     def get_all_l_values(self):
@@ -412,7 +416,10 @@ class FunctionCall(Expression):
             return children + tuple(map(recurse_on_children, children))
 
         return tuple(
-            filter(lambda n: isinstance(n, LValue), recurse_on_children(self.function_def.body))
+            filter(
+                lambda n: isinstance(n, LValue),
+                recurse_on_children(self.function_def.body),
+            )
         )
 
     @staticmethod
@@ -422,6 +429,10 @@ class FunctionCall(Expression):
     def evaluate_type(self, types, env, exception_processor, exceptions):
         _type = Type.Undefined
         all_constants = self.get_all_l_values()
+        for constant in all_constants:
+            constant.evaluate_type(types, env, exception_processor, exceptions)
+        for argument in self.arguments:
+            argument.evaluate_type(types, env, exception_processor, exceptions)
         if all_constants:
             if not self.all_same_type(all_constants):
                 raise ValueError()
@@ -429,9 +440,11 @@ class FunctionCall(Expression):
                 _type = all_constants[0].get_type()
         if self.arguments:
             if not self.all_same_type(self.arguments):
-                raise ValueError()
+                exception_processor.raise_a_type_mismatch_exception(
+                    self.arguments, types, self.pos
+                )
             else:
-                type_args = self.arguments[0].get_type()
+                type_args = types[self.arguments[0]]
                 if _type != Type.Undefined and type_args != _type:
                     raise ValueError
                 _type = type_args

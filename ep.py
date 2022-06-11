@@ -2,10 +2,8 @@
 
 import itertools
 from pprint import pprint
-
-import utils
-from ast_nodes import RValue
-from exc_processor import ExceptionProcessor, TokenLocation
+from utils import print_ast
+from exc_processor import ExceptionProcessor
 from parser import Parser
 from semantic_checker import SemanticChecker
 from tokenizer import Tokenizer, Token, TokenType
@@ -42,7 +40,7 @@ def dump_tokens_to_stdout(tokens: list[Token]) -> None:
     help="Generate a dot file and convert to a pdf with AST graphs",
 )
 @click.argument("filename")
-def ep_entry(filename: str, dump_tokens: bool, view_ast_dot: bool):
+def ep_entry(filename: str, dump_tokens: bool, view_ast_dot: bool) -> None:
     with open(filename, "r") as f:
         source_code: str = f.read()
         processor = ExceptionProcessor(source_code, filename)
@@ -52,7 +50,7 @@ def ep_entry(filename: str, dump_tokens: bool, view_ast_dot: bool):
             dump_tokens_to_stdout(list(tokens_copy))
         parser = Parser(tokens, processor)
         if view_ast_dot:
-            utils.print_ast(parser.nodes)
+            print_ast(parser.nodes)
         semantic_checker = SemanticChecker(parser.nodes, processor)
         values = evaluate(semantic_checker, parser.nodes)
 

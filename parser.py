@@ -175,8 +175,8 @@ class Parser:
 
     def parse_args_or_params(
         self, is_parameter: bool
-    ) -> tuple[TokenLocation, tuple[RValue | LValue]]:
-        parameters_or_args: list[RValue | LValue] = []
+    ) -> tuple[TokenLocation, tuple[Value]]:
+        parameters_or_args: list[Value] = []
         pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
         while self.get_current_token_type() != TokenType.R_PAR:
             if self.get_current_token_type() == TokenType.COMMA:
@@ -187,8 +187,12 @@ class Parser:
                 )
                 parameters_or_args.append(RValue(param_token.loc, param_token.lexeme))
             else:
-                num_literal_token = self.parse_num_literal()
-                parameters_or_args.append(num_literal_token)
+                if self.get_current_token_type() == TokenType.ID:
+                    token = self.consume_token(TokenType.ID, "expected an identifier")
+                    param_or_arg = RValue(token.loc, token.lexeme)
+                else:
+                    param_or_arg = self.parse_num_literal()
+                parameters_or_args.append(param_or_arg)
             if (
                 self.get_current_token_type() == TokenType.COMMA
                 or self.get_current_token_type() == TokenType.R_PAR

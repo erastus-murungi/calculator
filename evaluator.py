@@ -8,7 +8,9 @@ from semantic_checker import SemanticChecker
 from tokenizer import Name
 
 
-def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]) -> list[Optional[float]]:
+def evaluate(
+    semantic_checker: SemanticChecker, nodes: list[Node]
+) -> list[Optional[float]]:
     results = []
     values = {}
     for node in nodes:
@@ -28,9 +30,7 @@ def evaluate(semantic_checker: SemanticChecker, nodes: list[Node]) -> list[Optio
         )
     for node, line in zip(nodes, lines):
         val = values[node]
-        print(
-            f"In [{colored(str(node.pos.line), 'green', attrs=['bold'])}]: {line}"
-        )
+        print(f"In [{colored(str(node.pos.line), 'green', attrs=['bold'])}]: {line}")
         if val:
             print(
                 f"Out[{colored(str(node.pos.line), 'magenta', attrs=['bold'])}]: => {colored(str(val), 'blue', attrs=['bold'])}"
@@ -43,7 +43,7 @@ def format_line(line):
     def color_name(matchobj):
         text = matchobj.group(0)
         if text == "let" or text == "func":
-            return colored(matchobj.group(0), 'green', attrs=['bold'])
+            return colored(matchobj.group(0), "green", attrs=["bold"])
         return matchobj.group(0)
 
     line = re.sub(Name, color_name, line)
