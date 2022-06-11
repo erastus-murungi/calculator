@@ -36,12 +36,14 @@ class ExceptionProcessor:
             return e, traceback.format_stack()
 
     def raise_a_type_mismatch_exception(
-            self, args: tuple["Value", ...], types, loc: TokenLocation
+        self, args: tuple["Value", ...], types, loc: TokenLocation
     ):
         line = self.lines[loc.line]
         s = termcolor.colored("error:", "red")
-        print(f"{loc}: {s} arguments must all be of the same type \n"
-              f"{loc.line} | {line}\n"
-              f"The statically evaluated types of your arguments are:\n" +
-              "\n".join([f"  {arg.source()} => {types[arg]}" for arg in args]))
+        print(
+            f"{loc}: {s} arguments must all be of the same type \n"
+            f"{loc.line} | {line}\n"
+            f"The statically evaluated types of your arguments are:\n"
+            + "\n".join([f"  {arg.source()} => {types[arg]}" for arg in args])
+        )
         sys.exit(1)

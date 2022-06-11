@@ -195,8 +195,13 @@ class ComplexLiteral(LValue):
     def children(self) -> tuple["Node", ...]:
         pass
 
-    def evaluate_type(self, types: dict["Node", Type], env: dict[str, "Expression"],
-                      exception_processor: ExceptionProcessor, exceptions: list[Exception]):
+    def evaluate_type(
+        self,
+        types: dict["Node", Type],
+        env: dict[str, "Expression"],
+        exception_processor: ExceptionProcessor,
+        exceptions: list[Exception],
+    ):
         types[self] = Type.Complex
 
     def evaluate(self, types, env, exception_processor, exceptions, values):

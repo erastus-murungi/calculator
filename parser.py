@@ -6,7 +6,7 @@ from tokenizer import Token, TokenType
 
 class Parser:
     def __init__(
-            self, tokens: Iterator[Token], exception_processor: ExceptionProcessor
+        self, tokens: Iterator[Token], exception_processor: ExceptionProcessor
     ):
         self.exception_processor: ExceptionProcessor = exception_processor
         self.tokens = tuple(
@@ -48,8 +48,8 @@ class Parser:
     def parse_add_sub(self):
         lhs = self.parse_mul_div_rem()
         if (
-                self.get_current_token_type() == TokenType.ADD
-                or self.get_current_token_type() == TokenType.SUBTRACT
+            self.get_current_token_type() == TokenType.ADD
+            or self.get_current_token_type() == TokenType.SUBTRACT
         ):
             op_token = self.consume_token_no_check()
             rhs = self.parse_add_sub()
@@ -63,10 +63,10 @@ class Parser:
     def parse_mul_div_rem(self):
         lhs: Expression = self.parse_exponent()
         if (
-                self.get_current_token_type() == TokenType.MULTIPLY
-                or self.get_current_token_type() == TokenType.FLOOR_DIV
-                or self.get_current_token_type() == TokenType.TRUE_DIVIDE
-                or self.get_current_token() == TokenType.MODULUS
+            self.get_current_token_type() == TokenType.MULTIPLY
+            or self.get_current_token_type() == TokenType.FLOOR_DIV
+            or self.get_current_token_type() == TokenType.TRUE_DIVIDE
+            or self.get_current_token() == TokenType.MODULUS
         ):
             op_token = self.consume_token_no_check()
             rhs = self.parse_mul_div_rem()
@@ -185,7 +185,7 @@ class Parser:
         return FloatLiteral(token.loc, lexeme, float(lexeme))
 
     def parse_args_or_params(
-            self, is_parameter: bool
+        self, is_parameter: bool
     ) -> tuple[TokenLocation, tuple[Value]]:
         parameters_or_args: list[Value] = []
         pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
@@ -205,8 +205,8 @@ class Parser:
                     param_or_arg = self.parse_num_literal()
                 parameters_or_args.append(param_or_arg)
             if (
-                    self.get_current_token_type() == TokenType.COMMA
-                    or self.get_current_token_type() == TokenType.R_PAR
+                self.get_current_token_type() == TokenType.COMMA
+                or self.get_current_token_type() == TokenType.R_PAR
             ):
                 continue
             raise ValueError(f"unexpected token type: {self.get_current_token_type()}")
@@ -236,11 +236,17 @@ class Parser:
         return real_part
 
     def parse_complex_literal(self) -> ComplexLiteral:
-        complex_token = self.consume_token(TokenType.COMPLEX, "expected complex keyword")
+        complex_token = self.consume_token(
+            TokenType.COMPLEX, "expected complex keyword"
+        )
         self.consume_token(TokenType.L_PAR, "expected left parenthesis")
         real_part = self.get_num_literal_for_complex_literal()
         self.consume_token(TokenType.COMMA, "expected comma")
         imag_part = self.get_num_literal_for_complex_literal()
         self.consume_token(TokenType.R_PAR, "expected right parenthesis")
-        return ComplexLiteral(complex_token.loc, f"{complex_token.lexeme}({real_part.source()}, {imag_part.source()})",
-                              real_part, imag_part)
+        return ComplexLiteral(
+            complex_token.loc,
+            f"{complex_token.lexeme}({real_part.source()}, {imag_part.source()})",
+            real_part,
+            imag_part,
+        )
