@@ -6,7 +6,7 @@ from tokenizer import Token, TokenType
 
 class Parser:
     def __init__(
-        self, tokens: Iterator[Token], exception_processor: ExceptionProcessor
+            self, tokens: Iterator[Token], exception_processor: ExceptionProcessor
     ):
         self.exception_processor: ExceptionProcessor = exception_processor
         self.tokens = tuple(
@@ -48,8 +48,8 @@ class Parser:
     def parse_add_sub(self):
         lhs = self.parse_mul_div_rem()
         if (
-            self.get_current_token_type() == TokenType.ADD
-            or self.get_current_token_type() == TokenType.SUBTRACT
+                self.get_current_token_type() == TokenType.ADD
+                or self.get_current_token_type() == TokenType.SUBTRACT
         ):
             op_token = self.consume_token_no_check()
             rhs = self.parse_add_sub()
@@ -63,10 +63,10 @@ class Parser:
     def parse_mul_div_rem(self):
         lhs: Expression = self.parse_exponent()
         if (
-            self.get_current_token_type() == TokenType.MULTIPLY
-            or self.get_current_token_type() == TokenType.FLOOR_DIV
-            or self.get_current_token_type() == TokenType.TRUE_DIVIDE
-            or self.get_current_token() == TokenType.MODULUS
+                self.get_current_token_type() == TokenType.MULTIPLY
+                or self.get_current_token_type() == TokenType.FLOOR_DIV
+                or self.get_current_token_type() == TokenType.TRUE_DIVIDE
+                or self.get_current_token() == TokenType.MODULUS
         ):
             op_token = self.consume_token_no_check()
             rhs = self.parse_mul_div_rem()
@@ -91,11 +91,13 @@ class Parser:
             return BinaryOp(base.pos, Exponent(op_offset), base, power)
         return base
 
-    def parse_num_literal(self):
+    def parse_num_literal(self, should_negate: bool = False):
         if self.get_current_token_type() == TokenType.INT:
-            return self.parse_int_literal()
+            return self.parse_int_literal(should_negate)
+        elif self.get_current_token_type() == TokenType.FLOAT:
+            return self.parse_float_literal(should_negate)
         else:
-            return self.parse_float_literal()
+            return self.parse_complex_literal()
 
     def parse_expr(self):
         match self.get_current_token_type():
@@ -105,6 +107,8 @@ class Parser:
                 return self.parse_parenthesized_expression()
             case TokenType.INT | TokenType.FLOAT:
                 return self.parse_num_literal()
+            case TokenType.COMPLEX:
+                return self.parse_complex_literal()
             case TokenType.ID:
                 return self.parse_load_or_function_call()
         raise ValueError
@@ -130,10 +134,13 @@ class Parser:
         pos, args = self.parse_args_or_params(is_parameter=False)
         return FunctionCall(pos, funcdef, args)
 
-    def parse_int_literal(self):
+    def parse_int_literal(self, should_negate: bool = False):
         int_literal = self.consume_token(TokenType.INT, "expected an int literal")
         offset = int_literal.loc
-        lexeme = int_literal.lexeme
+        if should_negate:
+            lexeme = "-" + int_literal.lexeme
+        else:
+            lexeme = int_literal.lexeme
         if lexeme.startswith("0b") or lexeme.startswith("0B"):
             return BinLiteral(offset, lexeme, int(lexeme[2:], 2))
         elif lexeme.startswith("0o") or lexeme.startswith("0O"):
@@ -169,12 +176,16 @@ class Parser:
             return UnaryOp(token.loc, UnarySub(token.loc), expression)
         raise ValueError
 
-    def parse_float_literal(self):
+    def parse_float_literal(self, should_negate: bool = False):
         token = self.consume_token(TokenType.FLOAT, "expected float")
-        return FloatLiteral(token.loc, token.lexeme, float(token.lexeme))
+        if should_negate:
+            lexeme = "-" + token.lexeme
+        else:
+            lexeme = token.lexeme
+        return FloatLiteral(token.loc, lexeme, float(lexeme))
 
     def parse_args_or_params(
-        self, is_parameter: bool
+            self, is_parameter: bool
     ) -> tuple[TokenLocation, tuple[Value]]:
         parameters_or_args: list[Value] = []
         pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
@@ -194,8 +205,8 @@ class Parser:
                     param_or_arg = self.parse_num_literal()
                 parameters_or_args.append(param_or_arg)
             if (
-                self.get_current_token_type() == TokenType.COMMA
-                or self.get_current_token_type() == TokenType.R_PAR
+                    self.get_current_token_type() == TokenType.COMMA
+                    or self.get_current_token_type() == TokenType.R_PAR
             ):
                 continue
             raise ValueError(f"unexpected token type: {self.get_current_token_type()}")
@@ -212,3 +223,24 @@ class Parser:
         )
         self.functions[function_name.lexeme] = func_def
         return func_def
+
+    def get_num_literal_for_complex_literal(self):
+        if self.get_current_token_type() == TokenType.SUBTRACT:
+            self.consume_token_no_check()
+            real_part = self.parse_num_literal(True)
+        elif self.get_current_token_type() == TokenType.ADD:
+            self.consume_token_no_check()
+            real_part = self.parse_num_literal()
+        else:
+            real_part = self.parse_num_literal()
+        return real_part
+
+    def parse_complex_literal(self) -> ComplexLiteral:
+        complex_token = self.consume_token(TokenType.COMPLEX, "expected complex keyword")
+        self.consume_token(TokenType.L_PAR, "expected left parenthesis")
+        real_part = self.get_num_literal_for_complex_literal()
+        self.consume_token(TokenType.COMMA, "expected comma")
+        imag_part = self.get_num_literal_for_complex_literal()
+        self.consume_token(TokenType.R_PAR, "expected right parenthesis")
+        return ComplexLiteral(complex_token.loc, f"{complex_token.lexeme}({real_part.source()}, {imag_part.source()})",
+                              real_part, imag_part)

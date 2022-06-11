@@ -136,6 +136,8 @@ class Tokenizer:
                 return TokenType.LET.value, TokenType.LET
             if re_match == TokenType.FUNCTION.value:
                 return TokenType.FUNCTION.value, TokenType.FUNCTION
+            if re_match == TokenType.COMPLEX.value:
+                return TokenType.COMPLEX.value, TokenType.COMPLEX
             return re_match, TokenType.ID
         return None
 

@@ -1,8 +1,6 @@
 import re
 from typing import Optional
-
 from termcolor import colored
-
 from ast_nodes import Node
 from semantic_checker import SemanticChecker
 from tokenizer import Name
@@ -35,14 +33,13 @@ def evaluate(
             print(
                 f"Out[{colored(str(node.pos.line), 'magenta', attrs=['bold'])}]: => {colored(str(val), 'blue', attrs=['bold'])}"
             )
-
     return results
 
 
 def format_line(line):
     def color_name(matchobj):
         text = matchobj.group(0)
-        if text == "let" or text == "func":
+        if text == "let" or text == "func" or text == "complex":
             return colored(matchobj.group(0), "green", attrs=["bold"])
         return matchobj.group(0)
 

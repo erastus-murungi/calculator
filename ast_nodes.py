@@ -117,14 +117,26 @@ class RValue(Value):
 
 @dataclass(frozen=True)
 class LValue(Value, ABC):
+    pass
+
+
+@dataclass(frozen=True)
+class RealNumber(Value, ABC):
     @staticmethod
     @abstractmethod
     def get_type() -> Type:
         pass
 
+    @abstractmethod
+    def get_raw_value(self):
+        pass
+
 
 @dataclass(frozen=True)
-class FloatLiteral(LValue):
+class FloatLiteral(RealNumber):
+    def get_raw_value(self):
+        return self.raw_value
+
     @staticmethod
     def get_type() -> Type:
         return Type.Float
@@ -142,7 +154,7 @@ class FloatLiteral(LValue):
 
 
 @dataclass(frozen=True)
-class IntLiteral(LValue, ABC):
+class IntLiteral(RealNumber, ABC):
     raw_value: int
 
     def children(self):
@@ -157,6 +169,9 @@ class IntLiteral(LValue, ABC):
     @staticmethod
     def get_type() -> Type:
         return Type.Integer
+
+    def get_raw_value(self):
+        return self.raw_value
 
 
 class DecimalLiteral(IntLiteral):
@@ -173,6 +188,23 @@ class BinLiteral(IntLiteral):
 
 class OctLiteral(IntLiteral):
     pass
+
+
+@dataclass(frozen=True)
+class ComplexLiteral(LValue):
+    def children(self) -> tuple["Node", ...]:
+        pass
+
+    def evaluate_type(self, types: dict["Node", Type], env: dict[str, "Expression"],
+                      exception_processor: ExceptionProcessor, exceptions: list[Exception]):
+        types[self] = Type.Complex
+
+    def evaluate(self, types, env, exception_processor, exceptions, values):
+        val = complex(real=self.real.get_raw_value(), imag=self.imag.get_raw_value())
+        values[self] = val
+
+    real: RealNumber
+    imag: RealNumber
 
 
 @dataclass(frozen=True)
