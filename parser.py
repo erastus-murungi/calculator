@@ -1,14 +1,14 @@
 from typing import Iterator
 
-from ast_nodes import *
+from core import *
 from tokenizer import Token, TokenType
 
 
 class Parser:
-    def __init__(
-        self, tokens: Iterator[Token], exception_processor: ExceptionProcessor
-    ):
-        self.exception_processor: ExceptionProcessor = exception_processor
+    def __init__(self, tokens: Iterator[Token], ep_context: EPContext):
+        self.exception_processor: ExceptionProcessor = (
+            ep_context.get_exception_processor()
+        )
         self.tokens = tuple(
             filter(lambda token: token.token_type != TokenType.WHITESPACE, tokens)
         )
@@ -27,8 +27,8 @@ class Parser:
 
     def consume_token(self, expected_type: TokenType, message: str = "") -> Token:
         if self.get_current_token_type() != expected_type:
-            raise ValueError(
-                f"expected {expected_type.value} got {self.get_current_token_type().value} : {message}"
+            self.exception_processor.raise_parsing_error(
+                self.get_current_token(), message, expected_type
             )
         token = self.get_current_token()
         self.advance()
@@ -187,7 +187,7 @@ class Parser:
     def parse_args_or_params(
         self, is_parameter: bool
     ) -> tuple[TokenLocation, tuple[Value]]:
-        parameters_or_args: list[Value] = []
+        parameters_or_args: list[RValue] | list[Value] = []
         pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
         while self.get_current_token_type() != TokenType.R_PAR:
             if self.get_current_token_type() == TokenType.COMMA:
@@ -215,13 +215,18 @@ class Parser:
 
     def parse_function_definition(self):
         self.consume_token(TokenType.FUNCTION, "expected the keyword func")
-        function_name = self.consume_token(TokenType.ID, "expected the function name")
+        func_name = self.consume_token(
+            TokenType.ID, "expected the function name after seeing the func keyword"
+        )
         pos, parameters = self.parse_args_or_params(is_parameter=True)
+        assert (
+            isinstance(param, RValue) for param in parameters
+        ), "all parameters must be RValues"
         self.consume_token(TokenType.DEFINE, "expected a define")
         func_def = FunctionDef(
-            pos, function_name.lexeme, parameters, self.parse_expr_entry()
+            pos, func_name.lexeme, parameters, self.parse_expr_entry()
         )
-        self.functions[function_name.lexeme] = func_def
+        self.functions[func_name.lexeme] = func_def
         return func_def
 
     def get_num_literal_for_complex_literal(self):
@@ -241,7 +246,10 @@ class Parser:
         )
         self.consume_token(TokenType.L_PAR, "expected left parenthesis")
         real_part = self.get_num_literal_for_complex_literal()
-        self.consume_token(TokenType.COMMA, "expected comma")
+        self.consume_token(
+            TokenType.COMMA,
+            "expected comma to split real and imag part of complex number",
+        )
         imag_part = self.get_num_literal_for_complex_literal()
         self.consume_token(TokenType.R_PAR, "expected right parenthesis")
         return ComplexLiteral(

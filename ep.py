@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
-import itertools
-from pprint import pprint
-from utils import print_ast
-from exc_processor import ExceptionProcessor
-from parser import Parser
-from semantic_checker import SemanticChecker
-from tokenizer import Tokenizer, Token, TokenType
-from evaluator import evaluate
 import click
 from termcolor import colored
+
+from core import EPContext, ExceptionProcessor
+from evaluator import evaluate
+from parser import Parser
+from semantics import check_semantics
+from tokenizer import Tokenizer, Token, TokenType
+from utils import print_ast
 
 
 def dump_tokens_to_stdout(tokens: list[Token]) -> None:
@@ -42,17 +41,18 @@ def dump_tokens_to_stdout(tokens: list[Token]) -> None:
 @click.argument("filename")
 def ep_entry(filename: str, dump_tokens: bool, view_ast_dot: bool) -> None:
     with open(filename, "r") as f:
+        ctx = EPContext()
         source_code: str = f.read()
-        processor = ExceptionProcessor(source_code, filename)
-        tokens = Tokenizer(source_code, processor).get_tokens()
+        ctx.set_source_code(source_code)
+        ctx.set_exception_processor(ExceptionProcessor(source_code, filename))
+        tokenizer = Tokenizer(ctx)
         if dump_tokens:
-            tokens, tokens_copy = itertools.tee(tokens)
-            dump_tokens_to_stdout(list(tokens_copy))
-        parser = Parser(tokens, processor)
+            dump_tokens_to_stdout(list(tokenizer.get_tokens()))
+        parser = Parser(tokenizer.get_tokens(), ctx)
         if view_ast_dot:
             print_ast(parser.nodes)
-        semantic_checker = SemanticChecker(parser.nodes, processor)
-        values = evaluate(semantic_checker, parser.nodes)
+        check_semantics(parser.nodes, ctx)
+        values = evaluate(parser.nodes, ctx)
 
 
 if __name__ == "__main__":

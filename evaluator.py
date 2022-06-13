@@ -1,30 +1,25 @@
 import re
 from typing import Optional
 from termcolor import colored
-from ast_nodes import Node
-from semantic_checker import SemanticChecker
+from core import Node, EPContext
 from tokenizer import Name
 
 
-def evaluate(
-    semantic_checker: SemanticChecker, nodes: list[Node]
-) -> list[Optional[float]]:
+def evaluate(nodes: list[Node], ep_context: EPContext) -> list[Optional[float]]:
     results = []
     values = {}
+    ep_context.set_node_to_value_mapping(values)
     for node in nodes:
-        node.evaluate(
-            semantic_checker.node_types,
-            semantic_checker.node_to_env[node],
-            semantic_checker.exception_processor,
-            semantic_checker.exceptions,
-            values,
-        )
-        results.append(values[node])
+        try:
+            node.evaluate(ep_context)
+            results.append(values[node])
+        except KeyError as e:
+            raise ValueError("literal not found in scope") from e
 
     lines = []
     for node in nodes:
         lines.append(
-            format_line(semantic_checker.exception_processor.lines[node.pos.line])
+            format_line(ep_context.get_exception_processor().lines[node.pos.line])
         )
     for node, line in zip(nodes, lines):
         val = values[node]

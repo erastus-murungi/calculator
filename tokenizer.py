@@ -1,10 +1,10 @@
 import itertools
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Iterator, Final
+from typing import Optional, Iterator
 import re
 
-from exc_processor import TokenLocation, ExceptionProcessor
+from core import EPContext, TokenLocation
 
 
 class NoMatchFound(Exception):
@@ -92,9 +92,9 @@ Name = r"\w+"
 class Tokenizer:
     """This class tokenizes an Ep program"""
 
-    def __init__(self, string: str, exception_processor: ExceptionProcessor):
-        self._exception_processor = exception_processor
-        self._code = string
+    def __init__(self, ep_context: EPContext):
+        self._exception_processor = ep_context.get_exception_processor()
+        self._code = ep_context.get_source_code()
         self._linenum = 0
         self._column = 0
         self._code_offset = 0

@@ -1,7 +1,7 @@
 import subprocess
 import sys
 
-from ast_nodes import Node, Operator
+from core import Node, Operator
 
 
 FILENAME = "ast"
