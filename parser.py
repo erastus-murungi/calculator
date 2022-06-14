@@ -3,6 +3,30 @@ from typing import Iterator
 from core import *
 from tokenizer import Token, TokenType
 
+OPERATOR_PRECEDENCE = {
+    "^": 3,
+    "*": 2,
+    "/": 2,
+    "%": 2,
+    "+": 1,
+    "-": 1,
+}
+
+
+class OpAssoc(Enum):
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+
+
+OPERATOR_ASSOC = {
+    "^": OpAssoc.RIGHT,
+    "*": OpAssoc.LEFT,
+    "/": OpAssoc.LEFT,
+    "%": OpAssoc.LEFT,
+    "+": OpAssoc.LEFT,
+    "-": OpAssoc.LEFT,
+}
+
 
 class Parser:
     def __init__(self, tokens: Iterator[Token], ep_context: EPContext):
@@ -39,6 +63,49 @@ class Parser:
         self.advance()
         return token
 
+    def parse_atom(self):
+        if self.get_current_token_type() == TokenType.L_PAR:
+            self.consume_token_no_check()
+            match self.get_current_token_type():
+                case TokenType.ADD | TokenType.SUBTRACT:
+                    return self.parse_unary_op_expr()
+                case TokenType.L_PAR:
+                    return self.parse_parenthesized_expression()
+                case TokenType.INT | TokenType.FLOAT:
+                    return self.parse_num_literal()
+                case TokenType.COMPLEX:
+                    return self.parse_complex_literal()
+                case TokenType.ID:
+                    return self.parse_load_or_function_call()
+        elif self.get_current_token_type() == TokenType.EOF:
+            self.exception_processor.raise_parsing_error(
+                self.get_current_token(), "source ended unexpectedly", ""
+            )
+        else:
+            self.exception_processor.raise_parsing_error(
+                self.get_current_token(), "error parsing atom", ""
+            )
+
+    def parse_expression(self):
+        lhs = self.parse_atom()
+        while True:
+            if (
+                self.get_current_token_type() == TokenType.EOF
+                or self.current_token_is_binary_op()
+            ):
+                pass
+
+    def current_token_is_binary_op(self):
+        return self.get_current_token_type() in {
+            TokenType.ADD,
+            TokenType.SUBTRACT,
+            TokenType.MODULUS,
+            TokenType.MULTIPLY,
+            TokenType.TRUE_DIV,
+            TokenType.FLOOR_DIV,
+            TokenType.EXPONENT,
+        }
+
     def parse_expr_entry(self) -> Expression:
         expr = self.parse_add_sub()
         if self.get_current_token_type() == TokenType.NEWLINE:
@@ -65,7 +132,7 @@ class Parser:
         if (
             self.get_current_token_type() == TokenType.MULTIPLY
             or self.get_current_token_type() == TokenType.FLOOR_DIV
-            or self.get_current_token_type() == TokenType.TRUE_DIVIDE
+            or self.get_current_token_type() == TokenType.TRUE_DIV
             or self.get_current_token() == TokenType.MODULUS
         ):
             op_token = self.consume_token_no_check()
@@ -75,7 +142,7 @@ class Parser:
                     return BinaryOp(lhs.pos, Multiply(op_token.loc), lhs, rhs)
                 case TokenType.FLOOR_DIV:
                     return BinaryOp(lhs.pos, FloorDivide(op_token.loc), lhs, rhs)
-                case TokenType.TRUE_DIVIDE:
+                case TokenType.TRUE_DIV:
                     return BinaryOp(lhs.pos, Divide(op_token.loc), lhs, rhs)
                 case TokenType.MODULUS:
                     return BinaryOp(lhs.pos, Modulus(op_token.loc), lhs, rhs)
@@ -163,8 +230,8 @@ class Parser:
 
     def parse_parenthesized_expression(self):
         token = self.consume_token_no_check()
-        expression = self.parse_exponent()
-        self.consume_token(TokenType.R_PAR, "expected (")
+        expression = self.parse_expr_entry()
+        self.consume_token(TokenType.R_PAR, "expected )")
         return Parenthesized(token.loc, body=expression)
 
     def parse_unary_op_expr(self):

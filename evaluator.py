@@ -1,11 +1,12 @@
 import re
+from numbers import Number
 from typing import Optional
 from termcolor import colored
 from core import Node, EPContext
 from tokenizer import Name
 
 
-def evaluate(nodes: list[Node], ep_context: EPContext) -> list[Optional[float]]:
+def evaluate(nodes: list[Node], ep_context: EPContext) -> dict[str, Optional[Number]]:
     results = []
     values = {}
     ep_context.set_node_to_value_mapping(values)
@@ -28,7 +29,7 @@ def evaluate(nodes: list[Node], ep_context: EPContext) -> list[Optional[float]]:
             print(
                 f"Out[{colored(str(node.pos.line), 'magenta', attrs=['bold'])}]: => {colored(str(val), 'blue', attrs=['bold'])}"
             )
-    return results
+    return {node.source(): values[node] for node, line in zip(nodes, lines)}
 
 
 def format_line(line):

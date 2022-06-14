@@ -16,7 +16,7 @@ class TokenType(Enum):
     ADD = "+"
     SUBTRACT = "-"
     MULTIPLY = "*"
-    TRUE_DIVIDE = "/"  # for example 3 / 2 = 1.5
+    TRUE_DIV = "/"  # for example 3 / 2 = 1.5
     FLOOR_DIV = "//"  # for example
     MODULUS = "%"
     EXPONENT = "^"
@@ -194,7 +194,7 @@ class Tokenizer:
                     match token_type:
                         # We try to match tokens which are just one character
                         # These will only cause col and offset to increase by 1
-                        case TokenType.L_PAR | TokenType.R_PAR | TokenType.ADD | TokenType.SUBTRACT | TokenType.MODULUS | TokenType.TRUE_DIVIDE | TokenType.MULTIPLY | TokenType.EXPONENT | TokenType.COMMA:
+                        case TokenType.L_PAR | TokenType.R_PAR | TokenType.ADD | TokenType.SUBTRACT | TokenType.MODULUS | TokenType.TRUE_DIV | TokenType.MULTIPLY | TokenType.EXPONENT | TokenType.COMMA:
                             token = Token.from_token_type(token_type, token_location)
                         # Although a newline is only one character, we match it differently because it will cause
                         # col to reset to 0 and line to increase by 1

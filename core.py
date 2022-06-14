@@ -593,12 +593,12 @@ class FunctionCall(Expression):
         return self.function_def.body.children()
 
     def evaluate(self, ep_context: EPContext):
-        values = ep_context.get_node_to_value_mapping()
+        node_to_value = ep_context.get_node_to_value_mapping()
         for param, arg in zip(self.function_def.parameters, self.arguments):
             arg.evaluate(ep_context)
-            values[param] = values[arg]
+            node_to_value[param] = node_to_value[arg]
         self.function_def.body.evaluate(ep_context)
-        values[self] = values[self.function_def.body]
+        node_to_value[self] = node_to_value[self.function_def.body]
 
     def get_all_l_values(self):
         def recurse_on_children(node):
@@ -684,7 +684,7 @@ class ExceptionProcessor:
         generic_message = (
             f"expected {expected_type!r} got {token.token_type!r}\n\t {message}\n"
         )
-        problematic_line = self.get_problematic_line_str(loc)
+        problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
             f"{loc}: {s} {generic_message} \n"
