@@ -1,0 +1,6 @@
+func F(G, m1, m2, r) := G * (m1 * m2) / (r * r) # https://en.wikipedia.org/wiki/Newton's_law_of_universal_gravitation
+let G:= 6.674e-11 # (6.674×10−11 m3⋅kg−1⋅s−2);
+let m1 := 10 # first mass in kg
+let m2 := 25 # second mass in kg
+let r := 56  # the distance between the centers of the masses in meters
+F(G, m1, m2, r)

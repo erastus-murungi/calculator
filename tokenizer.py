@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator, Optional
 
-from core import EPContext, TokenLocation, State
+from core import EPContext, State, TokenLocation
 
 
 class NoMatchFound(Exception):
@@ -36,6 +36,7 @@ class TokenType(Enum):
     INT = "integer"
     WHITESPACE = "whitespace"
     EOF = "EOF"
+    COMMENT = "#"
 
     def __repr__(self):
         return self.name
@@ -94,7 +95,7 @@ class Tokenizer:
 
     def __init__(self, ep_context: EPContext):
         self._exception_processor = ep_context.get_exception_processor()
-        self._code = ep_context.get_source_code()
+        self._code = ep_context.get_source_code() + "\n"
         self._linenum = 0
         self._column = 0
         self._code_offset = 0
@@ -150,7 +151,7 @@ class Tokenizer:
             or self._match_keyword()
         )
         if ret is None:
-            raise NoMatchFound
+            raise NoMatchFound(self._current_char())
         else:
             lexeme, ret_type = ret
             self._skip_n_chars(len(lexeme) - 1)
@@ -199,6 +200,8 @@ class Tokenizer:
                             token = Token.from_token_type(token_type, token_location)
                         # Although a newline is only one character, we match it differently because it will cause
                         # col to reset to 0 and line to increase by 1
+                        case TokenType.COMMENT:
+                            token = self.handle_comment()
                         case TokenType.NEWLINE:
                             token = Token.from_token_type(token_type, token_location)
                             self._linenum += 1
@@ -218,6 +221,27 @@ class Tokenizer:
             "",
             TokenLocation(filename, self._linenum, self._column, self._code_offset),
         )
+
+    def handle_comment(self):
+        end_comment_pos = self._remaining_code().index("\n")
+        if end_comment_pos == -1:
+            raise ValueError()
+        comment = self._remaining_code()[:end_comment_pos]
+        token = Token(
+            TokenType.COMMENT,
+            comment,
+            TokenLocation(
+                self._exception_processor.filename,
+                self._linenum,
+                self._column,
+                self._code_offset,
+            ),
+        )
+        self._skip_n_chars(len(comment))
+        self._linenum += 1
+        # we set column to -1 because it will be incremented to 0 after the token has been yielded
+        self._column = -1
+        return token
 
     def get_tokens(self) -> Iterator[Token]:
         """

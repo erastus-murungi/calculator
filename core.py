@@ -1,3 +1,5 @@
+import cmath
+import math
 import operator as op
 import sys
 import traceback
@@ -6,10 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from numbers import Number
-from typing import Optional, Callable
-
-import cmath
-import math
+from typing import Callable, Optional
 
 import termcolor
 
@@ -69,8 +68,18 @@ class EPContext:
 
     @staticmethod
     def populate_global_env():
-        global_env = {name: func for name, func in vars(math).items() if not name.startswith('_')}
-        global_env.update({f'c_{name}': func for name, func in vars(cmath).items() if not name.startswith('_')})
+        global_env = {
+            name: func for name, func in vars(math).items() if not name.startswith("_")
+        }
+        global_env.update(
+            {
+                f"c_{name}": func
+                for name, func in vars(cmath).items()
+                if not name.startswith("_")
+            }
+        )
+        global_env.update({"max": max})
+        global_env.update({"min": min})
         return global_env
 
     def get_global_env(self):
@@ -409,10 +418,7 @@ class Operator(Node, ABC):
 @dataclass(frozen=True)
 class UnaryOperator(Operator):
     lexeme: str
-    str_to_op = {
-        '+': lambda x: x,
-        '-': op.neg
-    }
+    str_to_op = {"+": lambda x: x, "-": op.neg}
 
     def source(self):
         return self.lexeme
@@ -544,6 +550,7 @@ class FunctionDef(Node):
 
 @dataclass(frozen=True)
 class PyFunctionCall(Expression):
+    func_name: str
     py_function: Callable
     arguments: tuple[Value, ...]
 
@@ -551,7 +558,25 @@ class PyFunctionCall(Expression):
         return ()
 
     def evaluate_type(self, ep_context: EPContext):
-        return Type.Undefined
+        node_to_type = ep_context.get_node_to_type_mapping()
+        if self.func_name.startswith("c_"):
+            node_to_type[self] = Type.Complex
+        else:
+            node_to_type[self] = Type.Float
+
+        types = ep_context.get_node_to_type_mapping()
+
+        _type = Type.Undefined
+
+        for argument in self.arguments:
+            argument.evaluate_type(ep_context)
+
+        if self.arguments:
+            if not FunctionCall.all_same_type(self.arguments):
+                exception_processor = ep_context.get_exception_processor()
+                exception_processor.raise_a_type_mismatch_exception(
+                    self.arguments, types, self.pos
+                )
 
     def evaluate(self, ep_context: EPContext):
         node_to_value = ep_context.get_node_to_value_mapping()
@@ -563,11 +588,12 @@ class PyFunctionCall(Expression):
             node_to_value[self] = res
             return res
         except TypeError as e:
-            ep_context.get_exception_processor().raise_evaluation_exception(self.pos, str(e))
-
+            ep_context.get_exception_processor().raise_evaluation_error(
+                self.pos, str(e)
+            )
 
     def source(self):
-        return self.py_function.__name__
+        return f"{self.py_function.__name__}({', '.join([arg.source() for arg in self.arguments])})"
 
 
 @dataclass(frozen=True)
@@ -575,17 +601,11 @@ class FunctionCall(Expression):
     function_def: FunctionDef
     arguments: tuple[Value, ...]
 
-    def update_values(self, ep_context: EPContext):
-        pass
-
     def source(self):
         return f"{self.function_def.name} ({', '.join([arg.source() for arg in self.arguments])})"
 
     def children(self) -> Optional[tuple["Node", ...]]:
-        try:
-            return self.function_def.body.children()
-        except AttributeError:
-            return ()
+        return self.function_def.body.children()
 
     def evaluate(self, ep_context: EPContext):
         node_to_value = ep_context.get_node_to_value_mapping()
@@ -595,7 +615,8 @@ class FunctionCall(Expression):
         self.function_def.body.evaluate(ep_context)
         node_to_value[self] = node_to_value[self.function_def.body]
 
-    def get_all_l_values(self):
+    @staticmethod
+    def get_all_l_values(root: Node):
         def recurse_on_children(node):
             children = node.children()
             return children + tuple(map(recurse_on_children, children))
@@ -603,7 +624,7 @@ class FunctionCall(Expression):
         return tuple(
             filter(
                 lambda n: isinstance(n, LValue),
-                recurse_on_children(self.get_func_body()),
+                recurse_on_children(root),
             )
         )
 
@@ -615,7 +636,7 @@ class FunctionCall(Expression):
         types = ep_context.get_node_to_type_mapping()
 
         _type = Type.Undefined
-        all_constants = self.get_all_l_values()
+        all_constants = self.get_all_l_values(self.function_def.body)
         for constant in all_constants:
             constant.evaluate_type(types, ep_context)
         for argument in self.arguments:
@@ -670,19 +691,24 @@ class ExceptionProcessor:
         line = self.lines[loc.line]
         s = termcolor.colored("error:", "red")
         print(
+            f"{termcolor.colored('[✗ TypeMismatch]', 'red')}\n"
             f"{loc}: {s} arguments must all be of the same type \n"
-            f"{loc.line} | {line}\n"
+            f"     {loc.line} | {line}\n\n"
             f"The statically evaluated types of your arguments are:\n"
-            + "\n".join([f"  {arg.source()} => {types[arg]}" for arg in args])
+            + "\n".join(
+                [
+                    f"  {arg.source()} => {termcolor.colored(str(types[arg].name), 'magenta')}"
+                    for arg in args
+                ]
+            )
         )
         sys.exit(1)
 
-    def raise_evaluation_exception(
-        self, loc: TokenLocation, message: str
-    ):
+    def raise_evaluation_error(self, loc: TokenLocation, message: str):
         problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
+            f"[EvaluationRuntimeError]\n"
             f"{loc}: {s} evaluation error \n"
             f"      {message}\n"
             f"      {problematic_line}\n"
@@ -693,13 +719,11 @@ class ExceptionProcessor:
         self, ep_context: EPContext, token, message: str, expected_type
     ):
         loc = token.loc
-        generic_message = (
-            f"expected {expected_type!r} got {token.token_type!r}\n\t {message}\n"
-        )
         problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
-            f"{loc}: {s} {generic_message} \n"
+            f"{termcolor.colored('[✗ ParsingError]', 'red')} {message}\n"
+            f"                 {loc}: {s} expected {expected_type} got {token.token_type}\n"
             + problematic_line
             + f"{''.join(' ' * problematic_line.index(token.lexeme))}{termcolor.colored('^' * len(token.lexeme), 'magenta')}"
         )
@@ -711,6 +735,7 @@ class ExceptionProcessor:
         problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
+            f"[ScopeError]"
             f"{loc}: {s} {generic_message} \n"
             + problematic_line
             + f"{''.join(' ' * problematic_line.index(identifier.literal))}{termcolor.colored('^' * len(identifier.literal), 'magenta')}"

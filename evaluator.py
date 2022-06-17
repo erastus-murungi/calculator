@@ -18,21 +18,16 @@ def evaluate(nodes: list[Node], ep_context: EPContext) -> dict[str, Optional[Num
             results.append(values[node])
         except KeyError as e:
             raise ValueError("literal not found in scope") from e
-
-    lines = []
-    for node in nodes:
-        lines.append(
-            format_line(ep_context.get_exception_processor().lines[node.pos.line])
-        )
-    for node, line in zip(nodes, lines):
-        val = values[node]
-        print(f"In [{colored(str(node.pos.line), 'green', attrs=['bold'])}]: {line}")
-        if val:
-            print(
-                f"Out[{colored(str(node.pos.line), 'magenta', attrs=['bold'])}]: => {colored(str(val), 'blue', attrs=['bold'])}"
-            )
     ep_context.set_state(State.EVALUATION_COMPLETE)
-    return {node.source(): values[node] for node, line in zip(nodes, lines)}
+    return {node.source(): values[node] for node in nodes}
+
+
+def pretty_print_results(line_to_result: dict[str, Optional[Number]]) -> None:
+    lines = [format_line(line) for line in line_to_result]
+    for line_num, (line, result) in enumerate(zip(lines, line_to_result.values())):
+        print(f"eval ({colored(str(line_num), 'green', attrs=['bold'])})> {line}")
+        if result:
+            print(f"=> {colored(str(result), 'blue', attrs=['bold'])}")
 
 
 def format_line(line):

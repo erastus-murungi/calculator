@@ -39,7 +39,12 @@ class Parser:
     def __init__(self, tokens: Iterator[Token], ep_context: EPContext):
         self.ep_context = ep_context
         self.tokens = tuple(
-            filter(lambda token: token.token_type != TokenType.WHITESPACE, tokens)
+            filter(
+                lambda token: token.token_type != TokenType.WHITESPACE
+                and token.token_type != TokenType.COMMENT
+                and token.token_type != TokenType.NEWLINE,
+                tokens,
+            )
         )
         self.pos = 0
         self.functions: dict[str, FunctionDef] = {}
@@ -175,7 +180,7 @@ class Parser:
             try:
                 funcdef = self.ep_context.get_global_env()[func_name]
                 pos, args = self.parse_args_or_params(is_parameter=False)
-                return PyFunctionCall(pos, funcdef, args)
+                return PyFunctionCall(pos, func_name, funcdef, args)
             except KeyError:
                 self.ep_context.get_exception_processor().raise_parsing_error(
                     self.ep_context,
@@ -209,10 +214,6 @@ class Parser:
             if self.get_current_token_type() == TokenType.EOF:
                 self.consume_token_no_check()
                 break
-            else:
-                self.consume_token(
-                    TokenType.NEWLINE, "expected a newline character to split lines"
-                )
         return nodes
 
     def parse_parenthesized_expression(self):

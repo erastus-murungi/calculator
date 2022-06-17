@@ -1,16 +1,7 @@
 import sys
 
-from core import (
-    Env,
-    EPContext,
-    Expression,
-    FunctionDef,
-    Node,
-    ProcessingException,
-    RValue,
-    State,
-    Store,
-)
+from core import (Env, EPContext, Expression, FunctionDef, Node,
+                  ProcessingException, RValue, State, Store)
 
 
 def check_semantics(

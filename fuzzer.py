@@ -85,7 +85,8 @@ if __name__ == "__main__":
     # _ep_entry("(4 * 3) - 3 ^ 2", False, True)
     # print("correct =>", eval("(4 * 3) - 3 ^ 2".replace("^", "**")))
 
-    _ep_entry("c_cos(complex(10, 17))", False, False)
     #
     # _ep_entry("-3 * -2", False, False)
     # print("correct =>", eval("-3 * -2".replace("^", "**")))
+    with open("sample_programs/max.ep", "r") as f:
+        _ep_entry(f.read(), False, False, "data.json", True)
