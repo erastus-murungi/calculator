@@ -3,7 +3,6 @@ import sys
 
 from core import Node, Operator
 
-
 FILENAME = "ast"
 AST_DOT_FILEPATH = FILENAME + "." + "dot"
 AST_GRAPH_TYPE = "pdf"

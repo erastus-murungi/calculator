@@ -1,16 +1,22 @@
+from collections import namedtuple
 from typing import Iterator
 
 from core import *
 from tokenizer import Token, TokenType
 
+OpInfo = namedtuple("OpInfo", ("lexeme", "left_precedence", "right_precedence"))
+
 OPERATOR_PRECEDENCE = {
-    "^": 3,
-    "*": 2,
-    "/": 2,
-    "%": 2,
-    "+": 1,
-    "-": 1,
+    "^": OpInfo("^", 30, 30),
+    "*": OpInfo("^", 20, 21),
+    "/": OpInfo("^", 20, 21),
+    "//": OpInfo("^", 20, 21),
+    "%": OpInfo("^", 20, 21),
+    "+": OpInfo("^", 10, 11),
+    "-": OpInfo("^", 10, 11),
 }
+
+UNARY_OP_PRECEDENCE = {"-": 20, "+": 20}
 
 
 class OpAssoc(Enum):
@@ -22,6 +28,7 @@ OPERATOR_ASSOC = {
     "^": OpAssoc.RIGHT,
     "*": OpAssoc.LEFT,
     "/": OpAssoc.LEFT,
+    "//": OpAssoc.LEFT,
     "%": OpAssoc.LEFT,
     "+": OpAssoc.LEFT,
     "-": OpAssoc.LEFT,
@@ -30,20 +37,19 @@ OPERATOR_ASSOC = {
 
 class Parser:
     def __init__(self, tokens: Iterator[Token], ep_context: EPContext):
-        self.exception_processor: ExceptionProcessor = (
-            ep_context.get_exception_processor()
-        )
+        self.ep_context = ep_context
         self.tokens = tuple(
             filter(lambda token: token.token_type != TokenType.WHITESPACE, tokens)
         )
         self.pos = 0
         self.functions: dict[str, FunctionDef] = {}
         self.nodes: list[Node] = self.parse()
+        ep_context.set_state(State.SYNTACTIC_ANALYSIS_COMPLETE)
 
     def get_current_token(self):
         return self.tokens[self.pos]
 
-    def advance(self):
+    def gobble_token(self):
         self.pos += 1
 
     def get_current_token_type(self):
@@ -51,49 +57,76 @@ class Parser:
 
     def consume_token(self, expected_type: TokenType, message: str = "") -> Token:
         if self.get_current_token_type() != expected_type:
-            self.exception_processor.raise_parsing_error(
-                self.get_current_token(), message, expected_type
+            self.ep_context.get_exception_processor().raise_parsing_error(
+                self.ep_context, self.get_current_token(), message, expected_type
             )
         token = self.get_current_token()
-        self.advance()
+        self.gobble_token()
         return token
 
     def consume_token_no_check(self) -> Token:
         token = self.get_current_token()
-        self.advance()
+        self.gobble_token()
         return token
 
+    def parse_number(self):
+        match self.get_current_token_type():
+            case TokenType.INT:
+                return self.parse_int_literal()
+            case TokenType.FLOAT:
+                return self.parse_float_literal()
+            case _:
+                return self.parse_complex_literal()
+
+    # unary_expression ::= ( '-' | '+') expression
+    # atom ::= '(' expression ')' | NUMBER | VARIABLE | unary_expression
     def parse_atom(self):
-        if self.get_current_token_type() == TokenType.L_PAR:
-            self.consume_token_no_check()
-            match self.get_current_token_type():
-                case TokenType.ADD | TokenType.SUBTRACT:
-                    return self.parse_unary_op_expr()
-                case TokenType.L_PAR:
-                    return self.parse_parenthesized_expression()
-                case TokenType.INT | TokenType.FLOAT:
-                    return self.parse_num_literal()
-                case TokenType.COMPLEX:
-                    return self.parse_complex_literal()
-                case TokenType.ID:
-                    return self.parse_load_or_function_call()
-        elif self.get_current_token_type() == TokenType.EOF:
-            self.exception_processor.raise_parsing_error(
-                self.get_current_token(), "source ended unexpectedly", ""
+        match self.get_current_token_type():
+            case TokenType.ADD | TokenType.SUBTRACT:  # unary_expression ::= ( '-' | '+') expression
+                return self.parse_unary_op_expr(
+                    UNARY_OP_PRECEDENCE[self.get_current_token().lexeme]
+                )
+            case TokenType.L_PAR:  # '(' expression ')'
+                return self.parse_parenthesized_expression()  # NUMBER
+            case TokenType.INT | TokenType.FLOAT | TokenType.COMPLEX:
+                return self.parse_number()
+            case TokenType.ID:  # VARIABLE
+                return self.parse_load_or_function_call()
+        if self.get_current_token_type() == TokenType.EOF:
+            self.ep_context.get_exception_processor().raise_parsing_error(
+                self.ep_context,
+                self.get_current_token(),
+                "source ended unexpectedly",
+                "",
             )
         else:
-            self.exception_processor.raise_parsing_error(
-                self.get_current_token(), "error parsing atom", ""
+            self.ep_context.get_exception_processor().raise_parsing_error(
+                self.ep_context, self.get_current_token(), "error parsing atom", ""
             )
 
-    def parse_expression(self):
+    def parse_expression(self, min_precedence=1):
         lhs = self.parse_atom()
         while True:
             if (
                 self.get_current_token_type() == TokenType.EOF
-                or self.current_token_is_binary_op()
+                or not self.current_token_is_binary_op()
+                or OPERATOR_PRECEDENCE[self.get_current_token().lexeme].left_precedence
+                < min_precedence
             ):
-                pass
+                break
+            precedence = OPERATOR_PRECEDENCE[
+                self.get_current_token().lexeme
+            ].right_precedence
+            assoc = OPERATOR_ASSOC[self.get_current_token().lexeme]
+            next_min_precedence = (
+                precedence + 1 if assoc == OpAssoc.LEFT else precedence
+            )
+
+            op: Token = self.consume_token_no_check()
+
+            rhs = self.parse_expression(next_min_precedence)
+            lhs = BinaryOp(lhs.pos, BinaryOperator(op.loc, op.lexeme), lhs, rhs)
+        return lhs
 
     def current_token_is_binary_op(self):
         return self.get_current_token_type() in {
@@ -107,56 +140,7 @@ class Parser:
         }
 
     def parse_expr_entry(self) -> Expression:
-        expr = self.parse_add_sub()
-        if self.get_current_token_type() == TokenType.NEWLINE:
-            self.consume_token_no_check()
-        return expr
-
-    def parse_add_sub(self):
-        lhs = self.parse_mul_div_rem()
-        if (
-            self.get_current_token_type() == TokenType.ADD
-            or self.get_current_token_type() == TokenType.SUBTRACT
-        ):
-            op_token = self.consume_token_no_check()
-            rhs = self.parse_add_sub()
-            if op_token.token_type == TokenType.ADD:
-                return BinaryOp(lhs.pos, Add(op_token.loc), lhs, rhs)
-            elif op_token.token_type == TokenType.SUBTRACT:
-                return BinaryOp(lhs.pos, Subtract(op_token.loc), lhs, rhs)
-            raise ValueError
-        return lhs
-
-    def parse_mul_div_rem(self):
-        lhs: Expression = self.parse_exponent()
-        if (
-            self.get_current_token_type() == TokenType.MULTIPLY
-            or self.get_current_token_type() == TokenType.FLOOR_DIV
-            or self.get_current_token_type() == TokenType.TRUE_DIV
-            or self.get_current_token() == TokenType.MODULUS
-        ):
-            op_token = self.consume_token_no_check()
-            rhs = self.parse_mul_div_rem()
-            match op_token.token_type:
-                case TokenType.MULTIPLY:
-                    return BinaryOp(lhs.pos, Multiply(op_token.loc), lhs, rhs)
-                case TokenType.FLOOR_DIV:
-                    return BinaryOp(lhs.pos, FloorDivide(op_token.loc), lhs, rhs)
-                case TokenType.TRUE_DIV:
-                    return BinaryOp(lhs.pos, Divide(op_token.loc), lhs, rhs)
-                case TokenType.MODULUS:
-                    return BinaryOp(lhs.pos, Modulus(op_token.loc), lhs, rhs)
-                case _:
-                    raise ValueError
-        return lhs
-
-    def parse_exponent(self) -> Expression:
-        base: Expression = self.parse_expr()
-        if self.get_current_token_type() == TokenType.EXPONENT:
-            op_offset = self.consume_token_no_check().loc
-            power: Expression = self.parse_exponent()
-            return BinaryOp(base.pos, Exponent(op_offset), base, power)
-        return base
+        return self.parse_expression()
 
     def parse_num_literal(self, should_negate: bool = False):
         if self.get_current_token_type() == TokenType.INT:
@@ -165,20 +149,6 @@ class Parser:
             return self.parse_float_literal(should_negate)
         else:
             return self.parse_complex_literal()
-
-    def parse_expr(self):
-        match self.get_current_token_type():
-            case TokenType.ADD | TokenType.SUBTRACT:
-                return self.parse_unary_op_expr()
-            case TokenType.L_PAR:
-                return self.parse_parenthesized_expression()
-            case TokenType.INT | TokenType.FLOAT:
-                return self.parse_num_literal()
-            case TokenType.COMPLEX:
-                return self.parse_complex_literal()
-            case TokenType.ID:
-                return self.parse_load_or_function_call()
-        raise ValueError
 
     def parse_store(self):
         """This is the only type of statement allowed by the program"""
@@ -197,9 +167,22 @@ class Parser:
         return Load(token.loc, RValue(token.loc, token.lexeme))
 
     def parse_function_call(self, func_name: str):
-        funcdef = self.functions[func_name]
-        pos, args = self.parse_args_or_params(is_parameter=False)
-        return FunctionCall(pos, funcdef, args)
+        try:
+            funcdef = self.functions[func_name]
+            pos, args = self.parse_args_or_params(is_parameter=False)
+            return FunctionCall(pos, funcdef, args)
+        except KeyError:
+            try:
+                funcdef = self.ep_context.get_global_env()[func_name]
+                pos, args = self.parse_args_or_params(is_parameter=False)
+                return PyFunctionCall(pos, funcdef, args)
+            except KeyError:
+                self.ep_context.get_exception_processor().raise_parsing_error(
+                    self.ep_context,
+                    self.get_current_token(),
+                    f"{func_name} undefined",
+                    TokenType.FUNCTION,
+                )
 
     def parse_int_literal(self, should_negate: bool = False):
         int_literal = self.consume_token(TokenType.INT, "expected an int literal")
@@ -226,17 +209,24 @@ class Parser:
                 nodes.append(self.parse_function_definition())
             else:
                 nodes.append(self.parse_expr_entry())
+            if self.get_current_token_type() == TokenType.EOF:
+                self.consume_token_no_check()
+                break
+            else:
+                self.consume_token(
+                    TokenType.NEWLINE, "expected a newline character to split lines"
+                )
         return nodes
 
     def parse_parenthesized_expression(self):
         token = self.consume_token_no_check()
-        expression = self.parse_expr_entry()
+        expression = self.parse_expression()
         self.consume_token(TokenType.R_PAR, "expected )")
         return Parenthesized(token.loc, body=expression)
 
-    def parse_unary_op_expr(self):
+    def parse_unary_op_expr(self, precedence):
         token = self.consume_token_no_check()
-        expression = self.parse_expr_entry()
+        expression = self.parse_atom()
         if token.token_type == TokenType.ADD:
             return UnaryOp(token.loc, UnaryPlus(token.loc), expression)
         elif token.token_type == TokenType.SUBTRACT:
@@ -291,7 +281,7 @@ class Parser:
         ), "all parameters must be RValues"
         self.consume_token(TokenType.DEFINE, "expected a define")
         func_def = FunctionDef(
-            pos, func_name.lexeme, parameters, self.parse_expr_entry()
+            pos, func_name.lexeme, parameters, self.parse_expression()
         )
         self.functions[func_name.lexeme] = func_def
         return func_def
@@ -325,3 +315,6 @@ class Parser:
             real_part,
             imag_part,
         )
+
+    def __repr__(self):
+        return f"Parser(pos={self.pos}, tok={self.get_current_token().lexeme})"

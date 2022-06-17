@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 from numbers import Number
+from parser import Parser
 
 import click
 from termcolor import colored
 
 from core import EPContext, ExceptionProcessor
 from evaluator import evaluate
-from parser import Parser
 from semantics import check_semantics
-from tokenizer import Tokenizer, Token, TokenType
+from tokenizer import Token, Tokenizer, TokenType
 from utils import print_ast
 
 

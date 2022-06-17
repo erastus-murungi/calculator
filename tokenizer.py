@@ -1,10 +1,10 @@
 import itertools
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Iterator
-import re
+from typing import Iterator, Optional
 
-from core import EPContext, TokenLocation
+from core import EPContext, TokenLocation, State
 
 
 class NoMatchFound(Exception):
@@ -99,6 +99,7 @@ class Tokenizer:
         self._column = 0
         self._code_offset = 0
         self._token_iterable = self._tokenize()
+        ep_context.set_state(State.LEXICAL_ANALYSIS_COMPLETE)
 
     def _to_next_char(self):
         self._code_offset += 1

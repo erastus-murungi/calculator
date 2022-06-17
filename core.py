@@ -1,12 +1,16 @@
-from collections import defaultdict
-from dataclasses import dataclass, field
-from numbers import Number
-from enum import IntEnum, auto
-from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Optional
+import operator as op
 import sys
 import traceback
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import Enum, IntEnum, auto
+from numbers import Number
+from typing import Optional, Callable
+
+import cmath
+import math
+
 import termcolor
 
 
@@ -47,6 +51,7 @@ class State(IntEnum):
     LEXICAL_ANALYSIS_COMPLETE = auto()
     SYNTACTIC_ANALYSIS_COMPLETE = auto()
     SEMANTIC_ANALYSIS_COMPLETE = auto()
+    EVALUATION_COMPLETE = auto()
     ERROR = auto()
 
 
@@ -60,6 +65,16 @@ class EPContext:
         self._node_to_value_mapping: Optional[dict["Node", Optional[Number]]] = None
         self._node_to_env_mapping: Optional[dict["Node", Env]] = None
         self._node_to_type_mapping: Optional[dict["Node", "Type"]] = None
+        self._global_env = self.populate_global_env()
+
+    @staticmethod
+    def populate_global_env():
+        global_env = {name: func for name, func in vars(math).items() if not name.startswith('_')}
+        global_env.update({f'c_{name}': func for name, func in vars(cmath).items() if not name.startswith('_')})
+        return global_env
+
+    def get_global_env(self):
+        return self._global_env
 
     def set_source_code(self, source_code: str):
         self._source_code = source_code
@@ -166,10 +181,6 @@ class Node(ABC):
     def source(self):
         pass
 
-    @abstractmethod
-    def update_values(self, ep_context: EPContext):
-        pass
-
 
 @dataclass(frozen=True)
 class Expression(Node, ABC):
@@ -179,9 +190,6 @@ class Expression(Node, ABC):
 @dataclass(frozen=True)
 class Parenthesized(Expression):
     body: Expression
-
-    def update_values(self, ep_context: EPContext):
-        pass
 
     def evaluate(self, ep_context: EPContext):
         self.body.evaluate(ep_context)
@@ -366,7 +374,7 @@ class Load(Expression):
         values = ep_context.get_node_to_value_mapping()
         if self.id not in values:
             exception_processor = ep_context.get_exception_processor()
-            exception_processor.raise_scope_error(self.pos, self.id)
+            exception_processor.raise_scope_error(ep_context, self.pos, self.id)
         values[self] = values[self.id]
 
     def source(self):
@@ -429,7 +437,7 @@ class UnaryOp(Expression):
         pass
 
     def source(self):
-        return f"{self.op.source()} {self.operand.source()}"
+        return f"{self.op.source()}{self.operand.source()}"
 
     def evaluate(self, ep_context: EPContext):
         self.operand.evaluate(ep_context)
@@ -447,71 +455,27 @@ class UnaryOp(Expression):
         return self.op, self.operand
 
 
-@dataclass(
-    frozen=True,
-)
-class BinaryOperator(Operator, ABC):
-    pass
+@dataclass(frozen=True)
+class BinaryOperator(Operator):
+    lexeme: str
+    str_to_op = {
+        "+": op.add,
+        "-": op.sub,
+        "*": op.mul,
+        "/": op.truediv,
+        "//": op.floordiv,
+        "^": op.pow,
+    }
 
-    @abstractmethod
-    def evaluate_with_operands(self, rhs, lhs):
-        pass
+    def eval_with_operands(self, lhs, rhs):
+        return self.str_to_op[self.lexeme](lhs, rhs)
 
+    def __post_init__(self):
+        if self.lexeme not in self.str_to_op.keys():
+            raise ValueError(f"unrecognized binary op {self.lexeme}")
 
-class Add(BinaryOperator):
     def source(self):
-        return "+"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs + lhs
-
-
-class Subtract(BinaryOperator):
-    def source(self):
-        return "-"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs - lhs
-
-
-class Multiply(BinaryOperator):
-    def source(self):
-        return "*"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs * lhs
-
-
-class Divide(BinaryOperator):
-    def source(self):
-        return "/"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs / lhs
-
-
-class FloorDivide(BinaryOperator):
-    def source(self):
-        return "//"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs // lhs
-
-
-class Modulus(BinaryOperator):
-    def source(self):
-        return "%"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs % lhs
-
-
-class Exponent(BinaryOperator):
-    def source(self):
-        return "^"
-
-    def evaluate_with_operands(self, rhs, lhs):
-        return rhs**lhs
+        return self.lexeme
 
 
 @dataclass(frozen=True)
@@ -531,7 +495,7 @@ class BinaryOp(Expression):
         self.left.evaluate(ep_context)
         self.right.evaluate(ep_context)
         self.op.evaluate(ep_context)
-        value = self.op.evaluate_with_operands(values[self.left], values[self.right])
+        value = self.op.eval_with_operands(values[self.left], values[self.right])
         values[self] = value
 
     def evaluate_type(self, ep_context: EPContext):
@@ -543,7 +507,10 @@ class BinaryOp(Expression):
             exception_processor = ep_context.get_exception_processor()
             ep_context.record_exception(
                 exception_processor.raise_exception(
-                    self, self.pos, f"{types[self.left]} and {types[self.right]}"
+                    ep_context,
+                    self,
+                    self.pos,
+                    f"{types[self.left]} and {types[self.right]}",
                 )
             )
             types[self] = Type.Error
@@ -579,6 +546,34 @@ class FunctionDef(Node):
 
 
 @dataclass(frozen=True)
+class PyFunctionCall(Expression):
+    py_function: Callable
+    arguments: tuple[Value, ...]
+
+    def children(self) -> tuple["Node", ...]:
+        return ()
+
+    def evaluate_type(self, ep_context: EPContext):
+        return Type.Undefined
+
+    def evaluate(self, ep_context: EPContext):
+        node_to_value = ep_context.get_node_to_value_mapping()
+        for arg in self.arguments:
+            arg.evaluate(ep_context)
+        args = tuple(node_to_value[arg] for arg in self.arguments)
+        try:
+            res = self.py_function(*args)
+            node_to_value[self] = res
+            return res
+        except TypeError as e:
+            ep_context.get_exception_processor().raise_evaluation_exception(self.pos, str(e))
+
+
+    def source(self):
+        return self.py_function.__name__
+
+
+@dataclass(frozen=True)
 class FunctionCall(Expression):
     function_def: FunctionDef
     arguments: tuple[Value, ...]
@@ -590,7 +585,10 @@ class FunctionCall(Expression):
         return f"{self.function_def.name} ({', '.join([arg.source() for arg in self.arguments])})"
 
     def children(self) -> Optional[tuple["Node", ...]]:
-        return self.function_def.body.children()
+        try:
+            return self.function_def.body.children()
+        except AttributeError:
+            return ()
 
     def evaluate(self, ep_context: EPContext):
         node_to_value = ep_context.get_node_to_value_mapping()
@@ -608,7 +606,7 @@ class FunctionCall(Expression):
         return tuple(
             filter(
                 lambda n: isinstance(n, LValue),
-                recurse_on_children(self.function_def.body),
+                recurse_on_children(self.get_func_body()),
             )
         )
 
@@ -654,13 +652,16 @@ class ExceptionProcessor:
         self.lines: list[str] = self.string.split("\n")
         self.filename = filename
 
-    def raise_exception(self, ob: object, loc: TokenLocation, message: str):
+    def raise_exception(
+        self, ep_context: EPContext, ob: object, loc: TokenLocation, message: str
+    ):
         line = self.lines[loc.line]
         try:
             raise ProcessingException(
                 f"{line}\n from {ob.__class__.__qualname__} : {message}"
             )
         except ProcessingException as e:
+            ep_context.set_state(State.ERROR)
             return e, traceback.format_stack()
 
     def get_problematic_line_str(self, line_number) -> str:
@@ -679,7 +680,21 @@ class ExceptionProcessor:
         )
         sys.exit(1)
 
-    def raise_parsing_error(self, token, message: str, expected_type):
+    def raise_evaluation_exception(
+        self, loc: TokenLocation, message: str
+    ):
+        problematic_line = self.get_problematic_line_str(loc.line)
+        s = termcolor.colored("error:", "red")
+        print(
+            f"{loc}: {s} evaluation error \n"
+            f"      {message}\n"
+            f"      {problematic_line}\n"
+        )
+        sys.exit(1)
+
+    def raise_parsing_error(
+        self, ep_context: EPContext, token, message: str, expected_type
+    ):
         loc = token.loc
         generic_message = (
             f"expected {expected_type!r} got {token.token_type!r}\n\t {message}\n"
@@ -691,15 +706,17 @@ class ExceptionProcessor:
             + problematic_line
             + f"{''.join(' ' * problematic_line.index(token.lexeme))}{termcolor.colored('^' * len(token.lexeme), 'magenta')}"
         )
+        ep_context.set_state(State.ERROR)
         sys.exit(1)
 
-    def raise_scope_error(self, loc, identifier):
+    def raise_scope_error(self, ep_context: EPContext, loc, identifier):
         generic_message = f'use of undeclared identifier "{identifier.literal}"'
-        problematic_line = problematic_line = self.get_problematic_line_str(loc.line)
+        problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
             f"{loc}: {s} {generic_message} \n"
             + problematic_line
             + f"{''.join(' ' * problematic_line.index(identifier.literal))}{termcolor.colored('^' * len(identifier.literal), 'magenta')}"
         )
+        ep_context.set_state(State.ERROR)
         sys.exit(1)
