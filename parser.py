@@ -187,10 +187,7 @@ class Parser:
     def parse_int_literal(self, should_negate: bool = False):
         int_literal = self.consume_token(TokenType.INT, "expected an int literal")
         offset = int_literal.loc
-        if should_negate:
-            lexeme = "-" + int_literal.lexeme
-        else:
-            lexeme = int_literal.lexeme
+        lexeme = "-" + int_literal.lexeme if should_negate else int_literal.lexeme
         if lexeme.startswith("0b") or lexeme.startswith("0B"):
             return BinLiteral(offset, lexeme, int(lexeme[2:], 2))
         elif lexeme.startswith("0o") or lexeme.startswith("0O"):
@@ -227,18 +224,11 @@ class Parser:
     def parse_unary_op_expr(self, precedence):
         token = self.consume_token_no_check()
         expression = self.parse_atom()
-        if token.token_type == TokenType.ADD:
-            return UnaryOp(token.loc, UnaryPlus(token.loc), expression)
-        elif token.token_type == TokenType.SUBTRACT:
-            return UnaryOp(token.loc, UnarySub(token.loc), expression)
-        raise ValueError
+        return UnaryOp(token.loc, UnaryOperator(token.loc, token.lexeme), expression)
 
     def parse_float_literal(self, should_negate: bool = False):
         token = self.consume_token(TokenType.FLOAT, "expected float")
-        if should_negate:
-            lexeme = "-" + token.lexeme
-        else:
-            lexeme = token.lexeme
+        lexeme = "-" + token.lexeme if should_negate else token.lexeme
         return FloatLiteral(token.loc, lexeme, float(lexeme))
 
     def parse_args_or_params(

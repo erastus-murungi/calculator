@@ -406,26 +406,23 @@ class Operator(Node, ABC):
         types[self] = Type.Undefined
 
 
-class UnaryOperator(Operator, ABC):
-    @abstractmethod
-    def evaluate_with_operand(self, operand):
-        pass
+@dataclass(frozen=True)
+class UnaryOperator(Operator):
+    lexeme: str
+    str_to_op = {
+        '+': lambda x: x,
+        '-': op.neg
+    }
 
-
-class UnaryPlus(UnaryOperator):
     def source(self):
-        return "+"
+        return self.lexeme
 
     def evaluate_with_operand(self, operand):
-        return operand
+        return self.str_to_op[self.lexeme](operand)
 
-
-class UnarySub(UnaryOperator):
-    def source(self):
-        return "-"
-
-    def evaluate_with_operand(self, operand):
-        return -operand
+    def __post_init__(self):
+        if self.lexeme not in self.str_to_op:
+            raise ValueError(f"unrecognized unary op {self.lexeme}")
 
 
 @dataclass(frozen=True)
@@ -471,7 +468,7 @@ class BinaryOperator(Operator):
         return self.str_to_op[self.lexeme](lhs, rhs)
 
     def __post_init__(self):
-        if self.lexeme not in self.str_to_op.keys():
+        if self.lexeme not in self.str_to_op:
             raise ValueError(f"unrecognized binary op {self.lexeme}")
 
     def source(self):
