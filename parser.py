@@ -1,7 +1,9 @@
 from collections import namedtuple
+from enum import Enum
 from typing import Iterator
 
 from core import *
+from core import Expression, RValue
 from tokenizer import Token, TokenType
 
 OpInfo = namedtuple("OpInfo", ("lexeme", "left_precedence", "right_precedence"))
@@ -51,7 +53,7 @@ class Parser:
         self.nodes: list[Node] = self.parse()
         ep_context.set_state(State.SYNTACTIC_ANALYSIS_COMPLETE)
 
-    def get_current_token(self):
+    def get_current_token(self) -> Token:
         return self.tokens[self.pos]
 
     def gobble_token(self):
@@ -97,6 +99,10 @@ class Parser:
                 return self.parse_number()
             case TokenType.ID:  # VARIABLE
                 return self.parse_load_or_function_call()
+            case TokenType.LET:
+                return self.parse_let_in()
+            case TokenType.LEFT_BRACE:
+                return self.parse_expression_vector()
         if self.get_current_token_type() == TokenType.EOF:
             self.ep_context.get_exception_processor().raise_parsing_error(
                 self.ep_context,
@@ -130,7 +136,9 @@ class Parser:
             op: Token = self.consume_token_no_check()
 
             rhs = self.parse_expression(next_min_precedence)
-            lhs = BinaryOp(lhs.pos, BinaryOperator(op.loc, op.lexeme), lhs, rhs)
+            lhs = BinaryOp(
+                lhs.start_location, BinaryOperator(op.loc, op.lexeme), lhs, rhs
+            )
         return lhs
 
     def current_token_is_binary_op(self):
@@ -155,15 +163,25 @@ class Parser:
         else:
             return self.parse_complex_literal()
 
-    def parse_store(self):
+    def parse_rvalue_vector(self) -> RValueVector:
+        assert self.get_current_token_type() == TokenType.LEFT_BRACE
+        return RValueVector(self.get_current_token().loc, self._parse_rvalue_vector())
+
+    def parse_store(self) -> Store:
         """This is the only type of statement allowed by the program"""
         pos: TokenLocation = self.consume_token(
-            TokenType.LET, "expected let keyword"
+            TokenType.CONST, "expected const keyword"
         ).loc
-        var: Token = self.consume_token(TokenType.ID, "expected an identifier")
+
+        store_loc: RValueVector | RValue
+        if self.get_current_token_type() == TokenType.LEFT_BRACE:
+            store_loc = self.parse_rvalue_vector()
+        else:
+            var: Token = self.consume_token(TokenType.ID, "expected an identifier")
+            store_loc = RValue(var.loc, var.lexeme)
         self.consume_token(TokenType.DEFINE, "expected :=")
         expr: Expression = self.parse_expr_entry()
-        return Store(pos, RValue(var.loc, var.lexeme), expr)
+        return Store(pos, store_loc, expr)
 
     def parse_load_or_function_call(self):
         token = self.consume_token_no_check()
@@ -174,13 +192,13 @@ class Parser:
     def parse_function_call(self, func_name: str):
         try:
             funcdef = self.functions[func_name]
-            pos, args = self.parse_args_or_params(is_parameter=False)
+            pos, args = self.parse_args()
             return FunctionCall(pos, funcdef, args)
         except KeyError:
             try:
-                funcdef = self.ep_context.get_global_env()[func_name]
-                pos, args = self.parse_args_or_params(is_parameter=False)
-                return PyFunctionCall(pos, func_name, funcdef, args)
+                pyfunc: Callable = self.ep_context.get_global_env()[func_name]
+                pos, args = self.parse_args()
+                return PyFunctionCall(pos, func_name, pyfunc, args)
             except KeyError:
                 self.ep_context.get_exception_processor().raise_parsing_error(
                     self.ep_context,
@@ -189,23 +207,71 @@ class Parser:
                     TokenType.FUNCTION,
                 )
 
+    def parse_let_in(self):
+        pos = self.get_current_token().loc
+        bindings = []
+        while self.get_current_token_type() != TokenType.RETURN:
+            self.consume_token(TokenType.LET, "expected let keyword")
+            var: Token = self.consume_token(TokenType.ID, "expected an identifier")
+            self.consume_token(TokenType.DEFINE, "expected :=")
+            expr: Expression = self.parse_expr_entry()
+            bindings.append((RValue(var.loc, var.lexeme), expr))
+            self.consume_token(TokenType.IN, "expected in")
+        self.consume_token(TokenType.RETURN, "expected return")
+        ret_expr = self.parse_expr_entry()
+        return LetIn(pos, tuple(bindings), ret_expr)
+
     def parse_int_literal(self, should_negate: bool = False):
         int_literal = self.consume_token(TokenType.INT, "expected an int literal")
         offset = int_literal.loc
         lexeme = "-" + int_literal.lexeme if should_negate else int_literal.lexeme
         if lexeme.startswith("0b") or lexeme.startswith("0B"):
-            return BinLiteral(offset, lexeme, int(lexeme[2:], 2))
+            return BinLiteral(offset, int(lexeme[2:], 2), lexeme)
         elif lexeme.startswith("0o") or lexeme.startswith("0O"):
-            return OctLiteral(offset, lexeme, int(lexeme[2:], 8))
+            return OctLiteral(offset, int(lexeme[2:], 8), lexeme)
         elif lexeme.startswith("0X") or lexeme.startswith("0x"):
-            return HexLiteral(offset, lexeme, int(lexeme[2:], 16))
+            return HexLiteral(offset, int(lexeme[2:], 16), lexeme)
         else:
-            return DecimalLiteral(offset, lexeme, int(lexeme, 10))
+            return DecimalLiteral(offset, int(lexeme, 10), lexeme)
+
+    def parse_expression_vector(self):
+        return ExprVector(self.get_current_token().loc, self._parse_expression_vector())
+
+    def _parse_expression_vector(self) -> tuple[Expression, ...]:
+        self.consume_token(
+            TokenType.LEFT_BRACE, f"expected {TokenType.LEFT_BRACE} to start a vector"
+        )
+        ret: list[Expression] = []
+        while self.get_current_token_type() != TokenType.RIGHT_BRACE:
+            unit = self.parse_expr_entry()
+            ret.append(unit)
+            if self.get_current_token_type() == TokenType.COMMA:
+                self.consume_token(TokenType.COMMA)
+        self.consume_token(
+            TokenType.RIGHT_BRACE, "expected to close with a right parenthesis"
+        )
+        return tuple(ret)
+
+    def _parse_rvalue_vector(self) -> tuple[RValue, ...]:
+        self.consume_token(
+            TokenType.LEFT_BRACE, f"expected {TokenType.LEFT_BRACE} to start a vector"
+        )
+        ret: list[RValue] = []
+        while self.get_current_token_type() != TokenType.RIGHT_BRACE:
+            token = self.consume_token(TokenType.ID, "expected variable name")
+            unit = RValue(token.loc, token.lexeme)
+            ret.append(unit)
+            if self.get_current_token_type() == TokenType.COMMA:
+                self.consume_token(TokenType.COMMA)
+        self.consume_token(
+            TokenType.RIGHT_BRACE, "expected to close with a right parenthesis"
+        )
+        return tuple(ret)
 
     def parse(self):
         nodes = []
         while self.get_current_token_type() != TokenType.EOF:
-            if self.get_current_token_type() == TokenType.LET:
+            if self.get_current_token_type() == TokenType.CONST:
                 nodes.append(self.parse_store())
             elif self.get_current_token_type() == TokenType.FUNCTION:
                 nodes.append(self.parse_function_definition())
@@ -230,28 +296,15 @@ class Parser:
     def parse_float_literal(self, should_negate: bool = False):
         token = self.consume_token(TokenType.FLOAT, "expected float")
         lexeme = "-" + token.lexeme if should_negate else token.lexeme
-        return FloatLiteral(token.loc, lexeme, float(lexeme))
+        return FloatLiteral(token.loc, float(lexeme), lexeme)
 
-    def parse_args_or_params(
-        self, is_parameter: bool
-    ) -> tuple[TokenLocation, tuple[Value]]:
-        parameters_or_args: list[RValue] | list[Value] = []
+    def parse_args(self) -> tuple[TokenLocation, tuple[Expression, ...]]:
+        args: list[Expression] = []
         pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
         while self.get_current_token_type() != TokenType.R_PAR:
             if self.get_current_token_type() == TokenType.COMMA:
                 self.consume_token(TokenType.COMMA, "expected a comma")
-            if is_parameter:
-                param_token = self.consume_token(
-                    TokenType.ID, "expected a parameter name"
-                )
-                parameters_or_args.append(RValue(param_token.loc, param_token.lexeme))
-            else:
-                if self.get_current_token_type() == TokenType.ID:
-                    token = self.consume_token(TokenType.ID, "expected an identifier")
-                    param_or_arg = RValue(token.loc, token.lexeme)
-                else:
-                    param_or_arg = self.parse_num_literal()
-                parameters_or_args.append(param_or_arg)
+                args.append(self.parse_expr_entry())
             if (
                 self.get_current_token_type() == TokenType.COMMA
                 or self.get_current_token_type() == TokenType.R_PAR
@@ -259,14 +312,33 @@ class Parser:
                 continue
             raise ValueError(f"unexpected token type: {self.get_current_token_type()}")
         self.consume_token(TokenType.R_PAR)
-        return pos, tuple(parameters_or_args)
+        return pos, tuple(args)
+
+    def parse_params(self) -> tuple[TokenLocation, tuple[RValue, ...]]:
+        params: list[RValue] = []
+        pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
+        while self.get_current_token_type() != TokenType.R_PAR:
+            if self.get_current_token_type() == TokenType.COMMA:
+                self.consume_token(TokenType.COMMA, "expected a comma")
+                param_token = self.consume_token(
+                    TokenType.ID, "expected a parameter name"
+                )
+                params.append(RValue(param_token.loc, param_token.lexeme))
+            if (
+                self.get_current_token_type() == TokenType.COMMA
+                or self.get_current_token_type() == TokenType.R_PAR
+            ):
+                continue
+            raise ValueError(f"unexpected token type: {self.get_current_token_type()}")
+        self.consume_token(TokenType.R_PAR)
+        return pos, tuple(params)
 
     def parse_function_definition(self):
         self.consume_token(TokenType.FUNCTION, "expected the keyword func")
         func_name = self.consume_token(
             TokenType.ID, "expected the function name after seeing the func keyword"
         )
-        pos, parameters = self.parse_args_or_params(is_parameter=True)
+        pos, parameters = self.parse_params()
         assert (
             isinstance(param, RValue) for param in parameters
         ), "all parameters must be RValues"

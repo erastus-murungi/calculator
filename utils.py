@@ -1,7 +1,16 @@
+import collections
+import json
+import re
 import subprocess
 import sys
+import typing
+from numbers import Number
+from typing import Optional
+
+from termcolor import colored
 
 from core import Node, Operator
+from tokenizer import Name, Token, TokenType
 
 FILENAME = "ast"
 AST_DOT_FILEPATH = FILENAME + "." + "dot"
@@ -102,3 +111,47 @@ def create_graph_pdf(
     subprocess.run(args)
     subprocess.run(["open", output_filepath])
     subprocess.run(["rm", AST_DOT_FILEPATH])
+
+
+def pretty_print_results(results: dict[str, None | Number | list[Number]]) -> None:
+    lines = [format_line(line) for line in results]
+    for line_num, (line, result) in enumerate(zip(lines, results.values())):
+        print(f"eval ({colored(str(line_num), 'green', attrs=['bold'])})> {line}")
+        if result:
+            print(f"=> {colored(str(result), 'blue', attrs=['bold'])}")
+
+
+def format_line(line):
+    def color_name(matchobj):
+        text = matchobj.group(0)
+        if text in ("let", "in", "complex", "def", "return", "const"):
+            return colored(matchobj.group(0), "green", attrs=["bold"])
+        return matchobj.group(0)
+
+    line = re.sub(Name, color_name, line)
+    return line
+
+
+class ComplexEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, complex):
+            return {"real": obj.real, "imag": obj.imag}
+            # Let the base class default method raise the TypeError
+        return json.JSONEncoder.default(self, obj)
+
+
+def ep_to_json(results: dict[str, None | Number | list[Number]], out: str):
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=4, cls=ComplexEncoder)
+
+
+def dump_tokens_to_stdout(tokens: tuple[Token, ...]) -> None:
+    for token in tokens:
+        if (
+            token.token_type == TokenType.WHITESPACE
+            or token.token_type == TokenType.NEWLINE
+        ):
+            continue
+        print(
+            f"{colored(token.token_type.name.lower(), 'magenta')}\t\t{token.lexeme}\t\tLoc={token.loc}"
+        )

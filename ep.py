@@ -1,40 +1,23 @@
 #!/usr/bin/env python3
-import json
 from numbers import Number
 from parser import Parser
+from pprint import pprint
 from typing import Optional
 
 import click
-from termcolor import colored
 
 from core import EPContext, ExceptionProcessor
-from evaluator import evaluate, pretty_print_results
+from evaluator import evaluate
 from semantics import check_semantics
-from tokenizer import Token, Tokenizer, TokenType
-from utils import print_ast
+from tokenizer import Tokenizer
+from utils import (dump_tokens_to_stdout, ep_to_json, pretty_print_results,
+                   print_ast)
 
 
-class ComplexEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, complex):
-            return {"real": obj.real, "imag": obj.imag}
-            # Let the base class default method raise the TypeError
-        return json.JSONEncoder.default(self, obj)
-
-
-def dump_tokens_to_stdout(tokens: tuple[Token]) -> None:
-    for token in tokens:
-        if (
-            token.token_type == TokenType.WHITESPACE
-            or token.token_type == TokenType.NEWLINE
-        ):
-            continue
-        print(
-            f"{colored(token.token_type.name.lower(), 'magenta')}\t\t{token.lexeme}\t\tLoc={token.loc}"
-        )
-
-
-@click.command(name="EP", help="EP stands for Eval Print")
+@click.command(
+    name="EP",
+    help="EP(Eval Print) is a simple language which supports pure functions and variables",
+)
 @click.option(
     "--dump-tokens",
     "-d",
@@ -66,7 +49,7 @@ def dump_tokens_to_stdout(tokens: tuple[Token]) -> None:
 @click.argument("file", type=click.File("r"))
 def ep_entry(
     file, dump_tokens: bool, view_ast_dot: bool, out: str, print_results: bool
-) -> dict[str, Number | None]:
+) -> dict[str, Number | None | list[Number]]:
     return _ep_entry(
         file.read(), dump_tokens, view_ast_dot, out, print_results, file.name
     )
@@ -79,7 +62,8 @@ def _ep_entry(
     out: Optional[str],
     print_results: bool,
     filename: str = "",
-) -> dict[str, Number | None]:
+) -> dict[str, None | Number | list[Number]]:
+
     ctx = EPContext()
     ctx.set_source_code(source_code)
     ctx.set_exception_processor(ExceptionProcessor(source_code, filename))
@@ -92,8 +76,7 @@ def _ep_entry(
     check_semantics(parser.nodes, ctx)
     results = evaluate(parser.nodes, ctx)
     if out:
-        with open(out, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=4, cls=ComplexEncoder)
+        ep_to_json(results, out)
     if print_results:
         pretty_print_results(results)
     return results

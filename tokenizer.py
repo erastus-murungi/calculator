@@ -23,13 +23,19 @@ class TokenType(Enum):
     COMMA = ","
     COMPLEX = "complex"  # used to define a complex number
     DEFINE = ":="
-    LET = "let"  # define a binding
-    FUNCTION = "func"  # define a function
+    CONST = "const"  # define a binding
+    FUNCTION = "def"  # define a function
+    LET = "let"
+    IN = "in"
+    RETURN = "return"
     NEWLINE = "\n"
     CONTINUE = "\\n"
 
     L_PAR = "("
     R_PAR = ")"
+
+    LEFT_BRACE = "{"
+    RIGHT_BRACE = "}"
 
     ID = "identifier"
     FLOAT = "float"
@@ -110,7 +116,7 @@ class Tokenizer:
         self._code_offset += n
         self._column += n
 
-    def _match_number(self, number_regex: str) -> Optional[tuple[str, TokenType]]:
+    def _match_number(self, number_regex: str) -> tuple[str, TokenType] | None:
         match = re.match("^" + number_regex, self._code[self._code_offset :])
         token_type = None
         lexeme = ""
@@ -134,13 +140,18 @@ class Tokenizer:
         re_match = re.match("^" + Name, self._code[self._code_offset :])
         if re_match is not None:
             re_match = re_match.group(0)
-            if re_match == TokenType.LET.value:
-                return TokenType.LET.value, TokenType.LET
-            if re_match == TokenType.FUNCTION.value:
+            if re_match == TokenType.CONST.value:
+                return TokenType.CONST.value, TokenType.CONST
+            elif re_match == TokenType.FUNCTION.value:
                 return TokenType.FUNCTION.value, TokenType.FUNCTION
-            if re_match == TokenType.COMPLEX.value:
-                return TokenType.COMPLEX.value, TokenType.COMPLEX
-            return re_match, TokenType.ID
+            elif re_match == TokenType.LET.value:
+                return TokenType.LET.value, TokenType.LET
+            elif re_match == TokenType.IN.value:
+                return TokenType.IN.value, TokenType.IN
+            elif re_match == TokenType.RETURN.value:
+                return TokenType.RETURN.value, TokenType.RETURN
+            else:
+                return re_match, TokenType.ID
         return None
 
     def _try_match_keyword_or_number(self, pos) -> Token:
@@ -196,7 +207,7 @@ class Tokenizer:
                     match token_type:
                         # We try to match tokens which are just one character
                         # These will only cause col and offset to increase by 1
-                        case TokenType.L_PAR | TokenType.R_PAR | TokenType.ADD | TokenType.SUBTRACT | TokenType.MODULUS | TokenType.TRUE_DIV | TokenType.MULTIPLY | TokenType.EXPONENT | TokenType.COMMA:
+                        case TokenType.L_PAR | TokenType.R_PAR | TokenType.ADD | TokenType.SUBTRACT | TokenType.MODULUS | TokenType.TRUE_DIV | TokenType.MULTIPLY | TokenType.EXPONENT | TokenType.COMMA | TokenType.LEFT_BRACE | TokenType.RIGHT_BRACE:
                             token = Token.from_token_type(token_type, token_location)
                         # Although a newline is only one character, we match it differently because it will cause
                         # col to reset to 0 and line to increase by 1

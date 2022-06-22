@@ -18,7 +18,7 @@ def skewed_ops_choice(skew_prob=0.01):
 
 def generate_random_arithmetic_expression(
     depth: int = 1,
-    allowed_symbols: tuple[str] = (),
+    allowed_symbols: tuple[str, ...] = (),
     grouping_prob: float = 0.3,
     unary_prob=0.1,
 ) -> str:
@@ -88,5 +88,5 @@ if __name__ == "__main__":
     #
     # _ep_entry("-3 * -2", False, False)
     # print("correct =>", eval("-3 * -2".replace("^", "**")))
-    with open("sample_programs/max.ep", "r") as f:
+    with open("sample_programs/quadratic.ep", "r") as f:
         _ep_entry(f.read(), False, False, "data.json", True)

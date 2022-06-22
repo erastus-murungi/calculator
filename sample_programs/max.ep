@@ -1,2 +1,2 @@
-let max := max(1, 2, 38)
+const max := max(1, 2, 38)
 max

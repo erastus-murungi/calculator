@@ -6,11 +6,22 @@ import traceback
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum, auto
+from enum import IntEnum, auto
 from numbers import Number
 from typing import Callable, Optional
 
 import termcolor
+
+
+class Type(IntEnum):
+    Integer = 0
+    Float = 1
+    Complex = 2
+    Undefined = 3
+    Error = 4
+
+    def __repr__(self):
+        return self.name
 
 
 @dataclass(frozen=True)
@@ -25,7 +36,7 @@ class TokenLocation:
 
 
 @dataclass
-class Env(set[str, ...]):
+class Env(set[str]):
     parent: Optional["Env"] = None
     child: Optional["Env"] = None
 
@@ -54,6 +65,12 @@ class State(IntEnum):
     ERROR = auto()
 
 
+# Type aliases
+NodeToValueMapping = dict["Node", Optional[Number | list[Number]]]
+NodeToTypeMapping = dict["Node", Type | list[Type]]
+NodeToEnvMapping = dict["Node", Env]
+
+
 # A container class which should answer most questions
 class EPContext:
     def __init__(self):
@@ -61,10 +78,10 @@ class EPContext:
         self._source_code: str = ""
         self._state: State = State.SOURCE_CODE_READ
         self._exception_processor: Optional[ExceptionProcessor] = None
-        self._node_to_value_mapping: Optional[dict["Node", Optional[Number]]] = None
-        self._node_to_env_mapping: Optional[dict["Node", Env]] = None
-        self._node_to_type_mapping: Optional[dict["Node", "Type"]] = None
-        self._global_env = self.populate_global_env()
+        self._node_to_value_mapping: Optional[NodeToValueMapping] = None
+        self._node_to_env_mapping: Optional[NodeToEnvMapping] = None
+        self._node_to_type_mapping: Optional[NodeToTypeMapping] = None
+        self._global_env: dict[str, Callable] = self.populate_global_env()
 
     @staticmethod
     def populate_global_env():
@@ -107,14 +124,16 @@ class EPContext:
     def set_state(self, state: State):
         if not isinstance(state, State):
             raise ValueError()
-        self._state = state
+        if self._state != State.ERROR:
+            self._state = state
 
-    def set_node_to_value_mapping(self, node_to_value_mapping: dict["Node", Number]):
+    def set_node_to_value_mapping(self, node_to_value_mapping: NodeToValueMapping):
         if (
             not isinstance(node_to_value_mapping, dict)
             or not all(isinstance(key, Node) for key in node_to_value_mapping.keys())
             or not all(
-                isinstance(value, Number) for value in node_to_value_mapping.values()
+                None or isinstance(value, Number)
+                for value in node_to_value_mapping.values()
             )
         ):
             raise ValueError()
@@ -125,7 +144,7 @@ class EPContext:
             return self._node_to_value_mapping
         raise AttributeError()
 
-    def set_node_to_env_mapping(self, node_to_env_mapping: dict["Node", Env]):
+    def set_node_to_env_mapping(self, node_to_env_mapping: NodeToEnvMapping):
         if (
             not isinstance(node_to_env_mapping, dict)
             or not all(isinstance(key, Node) for key in node_to_env_mapping.keys())
@@ -144,32 +163,22 @@ class EPContext:
             return self._node_to_type_mapping
         raise AttributeError()
 
-    def set_node_to_type_mapping(self, node_to_type_mapping: dict["Node", "Type"]):
+    def set_node_to_type_mapping(self, node_to_type_mapping: NodeToTypeMapping):
         if (
             not isinstance(node_to_type_mapping, dict)
             or not all(isinstance(key, Node) for key in node_to_type_mapping.keys())
             or not all(
-                isinstance(value, Type) for value in node_to_type_mapping.values()
+                isinstance(value, Type) or isinstance(value, list)
+                for value in node_to_type_mapping.values()
             )
         ):
             raise ValueError()
         self._node_to_type_mapping = node_to_type_mapping
 
 
-class Type(Enum):
-    Integer = 0
-    Float = 1
-    Complex = 2
-    Undefined = 3
-    Error = 4
-
-    def __repr__(self):
-        return self.name
-
-
 @dataclass(frozen=True)
 class Node(ABC):
-    pos: TokenLocation = field(repr=False, hash=False)
+    start_location: TokenLocation = field(repr=False, hash=False)
 
     def is_terminal(self):
         return len(self.children()) == 0
@@ -210,8 +219,8 @@ class Parenthesized(Expression):
 
     def evaluate_type(self, ep_context: EPContext):
         self.body.evaluate_type(ep_context)
-        types = ep_context.get_node_to_type_mapping()
-        types[self] = types[self.body]
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
+        node_to_type_mapping[self] = node_to_type_mapping[self.body]
 
     def source(self):
         return f"({self.body.source()})"
@@ -219,16 +228,14 @@ class Parenthesized(Expression):
 
 @dataclass(frozen=True, unsafe_hash=True)
 class Value(Expression, ABC):
-    literal: str
-
-    def source(self):
-        return f"{self.literal}"
+    @abstractmethod
+    def literals(self):
+        pass
 
 
 @dataclass(frozen=True, unsafe_hash=True, eq=False)
 class RValue(Value):
-    def update_values(self, ep_context: EPContext):
-        pass
+    _literal: str
 
     def evaluate_type(self, ep_context: EPContext):
         pass
@@ -240,15 +247,21 @@ class RValue(Value):
         return ()
 
     def __eq__(self, other):
-        return self.literal == other.literal
+        return self.literals() == other.literals()
+
+    def literals(self):
+        return (self._literal,)
+
+    def source(self):
+        if isinstance(self._literal, str):
+            return f"{self._literal}"
+        else:
+            return f'{{{", ".join(self._literal)}}}'
 
 
 @dataclass(frozen=True)
 class LValue(Value, ABC):
     pass
-
-    def update_values(self, ep_context: EPContext):
-        pass
 
 
 @dataclass(frozen=True)
@@ -267,6 +280,14 @@ class RealNumber(Value, ABC):
 
 @dataclass(frozen=True)
 class FloatLiteral(RealNumber):
+    _literal: str
+
+    def source(self):
+        return str(self.raw_value)
+
+    def literals(self):
+        return (self._literal,)
+
     def update_values(self, ep_context: EPContext):
         pass
 
@@ -291,6 +312,14 @@ class FloatLiteral(RealNumber):
 
 @dataclass(frozen=True)
 class IntLiteral(RealNumber, ABC):
+    _literal: str
+
+    def literals(self):
+        return (self._literal,)
+
+    def source(self):
+        return self._literal
+
     def update_values(self, ep_context: EPContext):
         pass
 
@@ -331,10 +360,17 @@ class OctLiteral(IntLiteral):
 
 @dataclass(frozen=True)
 class ComplexLiteral(LValue):
+    literal: str
     real: RealNumber
     imag: RealNumber
 
-    def children(self) -> tuple["Node", ...]:
+    def source(self):
+        return f"complex({self.real}, {self.imag})"
+
+    def literals(self):
+        return str(complex(self.real.source(), self.imag.source()))
+
+    def children(self) -> tuple[Node, ...]:
         pass
 
     def evaluate_type(self, ep_context: EPContext):
@@ -348,27 +384,85 @@ class ComplexLiteral(LValue):
 
 
 @dataclass(frozen=True)
-class Store(Node):
-    id: RValue
-    expr: Expression
+class ExprVector(Expression):
+    expressions: tuple[Expression, ...]
 
-    def update_values(self, ep_context: EPContext):
-        pass
+    def children(self) -> tuple["Node", ...]:
+        return tuple(self.expressions)
+
+    def evaluate_type(self, ep_context: EPContext):
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
+        for expr in self.expressions:
+            expr.evaluate_type(ep_context)
+        node_to_type_mapping[self] = [
+            node_to_type_mapping[expr] for expr in self.expressions
+        ]
+
+    def evaluate(self, ep_context: EPContext):
+        node_to_value = ep_context.get_node_to_value_mapping()
+        node_to_value[self] = [expr.evaluate(ep_context) for expr in self.expressions]
 
     def source(self):
-        return f"let {self.id.source()} := {self.expr.source()}"
+        return f"{{{', '.join(expr.source() for expr in self.expressions)}}}"
+
+    def __len__(self):
+        return len(self.expressions)
+
+
+@dataclass(frozen=True)
+class RValueVector(Value):
+    stores: tuple[RValue, ...]
+
+    def children(self) -> tuple["Node", ...]:
+        return self.stores
+
+    def evaluate_type(self, ep_context: EPContext):
+        pass
+
+    def evaluate(self, ep_context: EPContext):
+        pass
+
+    def literals(self):
+        return [store._literal for store in self.stores]
+
+    def source(self):
+        return f"{{{', '.join(store.source() for store in self.stores)}}}"
+
+    def __len__(self):
+        return len(self.stores)
+
+
+@dataclass(frozen=True)
+class Store(Node):
+    id: RValue | RValueVector
+    expr: Expression
+
+    def source(self):
+        return f"const {self.id.source()} := {self.expr.source()}"
 
     def evaluate_type(self, ep_context: EPContext):
         self.id.evaluate_type(ep_context)
         self.expr.evaluate_type(ep_context)
         types = ep_context.get_node_to_type_mapping()
         types[self] = Type.Undefined
-        types[self.id] = types[self.expr]
+        if isinstance(self.id, RValueVector):
+            type_expr = types[self.expr]
+            assert isinstance(type_expr, list)
+            for binding, binding_type in zip(self.id.stores, type_expr):
+                types[binding] = binding_type
+        else:
+            types[self.id] = types[self.expr]
 
     def evaluate(self, ep_context: EPContext):
         self.expr.evaluate(ep_context)
         values = ep_context.get_node_to_value_mapping()
-        values[self.id] = values[self.expr]
+        if isinstance(self.id, RValueVector):
+            value_expr = values[self.expr]
+            assert isinstance(value_expr, list)
+            for binding, binding_type in zip(self.id.stores, value_expr):
+                values[binding] = binding_type
+        else:
+            values[self.id] = values[self.expr]
         values[self] = None
 
     def children(self):
@@ -380,23 +474,30 @@ class Load(Expression):
     id: Value
 
     def update_values(self, ep_context: EPContext):
-        values = ep_context.get_node_to_value_mapping()
-        if self.id not in values:
-            exception_processor = ep_context.get_exception_processor()
-            exception_processor.raise_scope_error(ep_context, self.pos, self.id)
-        values[self] = values[self.id]
+        node_to_value_mapping = ep_context.get_node_to_value_mapping()
+        # node_to_env_mapping = ep_context.get_node_to_env_mapping()
+        # env = node_to_env_mapping[self]
+        # for literal in self.id.literals():
+        #     if literal not in env:
+        #         exception_processor = ep_context.get_exception_processor()
+        #         exception_processor.raise_scope_error(
+        #             ep_context, self.start_location, literal
+        #         )
+        node_to_value_mapping[self] = node_to_value_mapping[self.id]
+        return node_to_value_mapping[self]
 
     def source(self):
         return self.id.source()
 
     def evaluate(self, ep_context: EPContext):
-        self.update_values(ep_context)
+        return self.update_values(ep_context)
 
     def evaluate_type(self, ep_context: EPContext):
-        types = ep_context.get_node_to_type_mapping()
-        types[self] = types[self.id]
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
+        self.id.evaluate_type(ep_context)
+        node_to_type_mapping[self] = node_to_type_mapping[self.id]
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple[Node, ...]:
         return ()
 
 
@@ -404,7 +505,7 @@ class Operator(Node, ABC):
     def update_values(self, ep_context: EPContext):
         pass
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple[Node, ...]:
         return ()
 
     def evaluate(self, ep_context: EPContext):
@@ -454,7 +555,7 @@ class UnaryOp(Expression):
         types = ep_context.get_node_to_type_mapping()
         types[self] = types[self.operand]
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple[Node, ...]:
         return self.op, self.operand
 
 
@@ -470,8 +571,9 @@ class BinaryOperator(Operator):
         "^": op.pow,
     }
 
-    def eval_with_operands(self, lhs, rhs):
-        return self.str_to_op[self.lexeme](lhs, rhs)
+    def eval_with_operands(self, lhs: Number, rhs: Number) -> Number:
+        func = self.str_to_op[self.lexeme]
+        return func(lhs, rhs)
 
     def __post_init__(self):
         if self.lexeme not in self.str_to_op:
@@ -505,22 +607,22 @@ class BinaryOp(Expression):
         self.left.evaluate_type(ep_context)
         self.right.evaluate_type(ep_context)
         self.op.evaluate_type(ep_context)
-        types = ep_context.get_node_to_type_mapping()
-        if types[self.left] != types[self.right]:
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
+        if node_to_type_mapping[self.left] != node_to_type_mapping[self.right]:
             exception_processor = ep_context.get_exception_processor()
             ep_context.record_exception(
                 exception_processor.raise_exception(
                     ep_context,
                     self,
-                    self.pos,
-                    f"{types[self.left]} and {types[self.right]}",
+                    self.start_location,
+                    f"{node_to_type_mapping[self.left]} and {node_to_type_mapping[self.right]}",
                 )
             )
-            types[self] = Type.Error
+            node_to_type_mapping[self] = Type.Error
         else:
-            types[self] = types[self.left]
+            node_to_type_mapping[self] = node_to_type_mapping[self.left]
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple[Node, ...]:
         return self.left, self.op, self.right
 
 
@@ -530,11 +632,8 @@ class FunctionDef(Node):
     parameters: tuple[RValue, ...]
     body: Expression
 
-    def update_values(self, ep_context: EPContext):
-        pass
-
     def source(self):
-        return f"{self.name} ({', '.join([arg.source() for arg in self.parameters])}) := {self.body.source()}"
+        return f"def {self.name}({', '.join([arg.source() for arg in self.parameters])}) := {self.body.source()}"
 
     def evaluate_type(self, ep_context: EPContext):
         types = ep_context.get_node_to_type_mapping()
@@ -544,7 +643,7 @@ class FunctionDef(Node):
         values = ep_context.get_node_to_value_mapping()
         values[self] = None
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple[Node, ...]:
         return self.body.children()
 
 
@@ -552,30 +651,26 @@ class FunctionDef(Node):
 class PyFunctionCall(Expression):
     func_name: str
     py_function: Callable
-    arguments: tuple[Value, ...]
+    arguments: tuple[Expression, ...]
 
-    def children(self) -> tuple["Node", ...]:
+    def children(self) -> tuple[Node, ...]:
         return ()
 
     def evaluate_type(self, ep_context: EPContext):
-        node_to_type = ep_context.get_node_to_type_mapping()
-        if self.func_name.startswith("c_"):
-            node_to_type[self] = Type.Complex
-        else:
-            node_to_type[self] = Type.Float
-
-        types = ep_context.get_node_to_type_mapping()
-
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
+        node_to_type_mapping[self] = (
+            Type.Complex if self.func_name.startswith("c_") else Type.Float
+        )
         _type = Type.Undefined
 
         for argument in self.arguments:
             argument.evaluate_type(ep_context)
 
         if self.arguments:
-            if not FunctionCall.all_same_type(self.arguments):
+            if not FunctionCall.all_same_type(self.arguments, ep_context):
                 exception_processor = ep_context.get_exception_processor()
                 exception_processor.raise_a_type_mismatch_exception(
-                    self.arguments, types, self.pos
+                    self.arguments, node_to_type_mapping, self.start_location
                 )
 
     def evaluate(self, ep_context: EPContext):
@@ -589,7 +684,7 @@ class PyFunctionCall(Expression):
             return res
         except TypeError as e:
             ep_context.get_exception_processor().raise_evaluation_error(
-                self.pos, str(e)
+                self.start_location, str(e)
             )
 
     def source(self):
@@ -599,12 +694,12 @@ class PyFunctionCall(Expression):
 @dataclass(frozen=True)
 class FunctionCall(Expression):
     function_def: FunctionDef
-    arguments: tuple[Value, ...]
+    arguments: tuple[Expression, ...]
 
     def source(self):
-        return f"{self.function_def.name} ({', '.join([arg.source() for arg in self.arguments])})"
+        return f"{self.function_def.name}({', '.join([arg.source() for arg in self.arguments])})"
 
-    def children(self) -> Optional[tuple["Node", ...]]:
+    def children(self) -> tuple["Node", ...]:
         return self.function_def.body.children()
 
     def evaluate(self, ep_context: EPContext):
@@ -629,35 +724,78 @@ class FunctionCall(Expression):
         )
 
     @staticmethod
-    def all_same_type(elements):
-        return all(isinstance(sub, type(elements[0])) for sub in elements[1:])
+    def all_same_type(elements, ep_context: EPContext):
+        types = ep_context.get_node_to_type_mapping()
+        first_type = types[elements[0]]
+        return all(types[sub] == first_type for sub in elements[1:])
 
     def evaluate_type(self, ep_context: EPContext):
-        types = ep_context.get_node_to_type_mapping()
+        node_to_type_mapping = ep_context.get_node_to_type_mapping()
 
         _type = Type.Undefined
         all_constants = self.get_all_l_values(self.function_def.body)
         for constant in all_constants:
-            constant.evaluate_type(types, ep_context)
+            constant.evaluate_type(node_to_type_mapping, ep_context)
         for argument in self.arguments:
             argument.evaluate_type(ep_context)
+        for param, arg in zip(self.function_def.parameters, self.arguments):
+            node_to_type_mapping[param] = node_to_type_mapping[arg]
+        self.function_def.body.evaluate_type(ep_context)
+        ret_type = node_to_type_mapping[self.function_def.body]
         if all_constants:
-            if not self.all_same_type(all_constants):
+            if not self.all_same_type(all_constants, ep_context):
                 raise ValueError()
             else:
                 _type = all_constants[0].get_type()
         if self.arguments:
-            if not self.all_same_type(self.arguments):
+            if not self.all_same_type(self.arguments, ep_context):
                 exception_processor = ep_context.get_exception_processor()
                 exception_processor.raise_a_type_mismatch_exception(
-                    self.arguments, types, self.pos
+                    self.arguments, node_to_type_mapping, self.start_location
                 )
             else:
-                type_args = types[self.arguments[0]]
+                type_args = node_to_type_mapping[self.arguments[0]]
                 if _type != Type.Undefined and type_args != _type:
                     raise ValueError
                 _type = type_args
-        return _type
+        node_to_type_mapping[self] = ret_type
+        return ret_type
+
+
+@dataclass(frozen=True)
+class LetIn(Expression):
+    bindings: tuple[tuple[RValue, Expression], ...]
+    ret: Expression
+
+    def children(self) -> tuple["Node", ...]:
+        return tuple(node for nodes in self.bindings for node in nodes) + (self.ret,)
+
+    def evaluate_type(self, ep_context: EPContext):
+        types = ep_context.get_node_to_type_mapping()
+        for binding_name, expr in self.bindings:
+            binding_name.evaluate_type(ep_context)
+            expr.evaluate_type(ep_context)
+            types[binding_name] = types[expr]
+        self.ret.evaluate_type(ep_context)
+        types[self] = types[self.ret]
+
+    def evaluate(self, ep_context: EPContext):
+        values = ep_context.get_node_to_value_mapping()
+        for binding_name, expr in self.bindings:
+            binding_name.evaluate(ep_context)
+            expr.evaluate(ep_context)
+            values[binding_name] = values[expr]
+        self.ret.evaluate(ep_context)
+        values[self] = values[self.ret]
+
+    def source(self):
+        return (
+            " ".join(
+                f"\n            let {var.source()} := {expr.source()} in"
+                for var, expr in self.bindings
+            )
+            + f"\n             return {self.ret.source()}"
+        )
 
 
 class ProcessingException(Exception):
@@ -686,7 +824,7 @@ class ExceptionProcessor:
         return f"    {line_number} | {self.lines[line_number]}\n"
 
     def raise_a_type_mismatch_exception(
-        self, args: tuple["Value", ...], types, loc: TokenLocation
+        self, args: tuple[Expression, ...], types, loc: TokenLocation
     ):
         line = self.lines[loc.line]
         s = termcolor.colored("error:", "red")
@@ -708,7 +846,7 @@ class ExceptionProcessor:
         problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
-            f"[EvaluationRuntimeError]\n"
+            f"[✗ EvaluationRuntimeError]\n"
             f"{loc}: {s} evaluation error \n"
             f"      {message}\n"
             f"      {problematic_line}\n"
@@ -730,15 +868,15 @@ class ExceptionProcessor:
         ep_context.set_state(State.ERROR)
         sys.exit(1)
 
-    def raise_scope_error(self, ep_context: EPContext, loc, identifier):
-        generic_message = f'use of undeclared identifier "{identifier.literal}"'
+    def raise_scope_error(self, ep_context: EPContext, loc, identifier: str):
+        generic_message = f'use of undeclared identifier "{identifier}"'
         problematic_line = self.get_problematic_line_str(loc.line)
         s = termcolor.colored("error:", "red")
         print(
-            f"[ScopeError]"
+            f"[✗ ScopeError]"
             f"{loc}: {s} {generic_message} \n"
             + problematic_line
-            + f"{''.join(' ' * problematic_line.index(identifier.literal))}{termcolor.colored('^' * len(identifier.literal), 'magenta')}"
+            + f"{''.join(' ' * problematic_line.index(identifier))}{termcolor.colored('^' * len(identifier), 'magenta')}"
         )
         ep_context.set_state(State.ERROR)
         sys.exit(1)
