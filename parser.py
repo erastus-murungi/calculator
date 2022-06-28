@@ -304,7 +304,7 @@ class Parser:
         while self.get_current_token_type() != TokenType.R_PAR:
             if self.get_current_token_type() == TokenType.COMMA:
                 self.consume_token(TokenType.COMMA, "expected a comma")
-                args.append(self.parse_expr_entry())
+            args.append(self.parse_expr_entry())
             if (
                 self.get_current_token_type() == TokenType.COMMA
                 or self.get_current_token_type() == TokenType.R_PAR
@@ -314,16 +314,15 @@ class Parser:
         self.consume_token(TokenType.R_PAR)
         return pos, tuple(args)
 
-    def parse_params(self) -> tuple[TokenLocation, tuple[RValue, ...]]:
+    def parse_params(
+        self, pos: TokenLocation
+    ) -> tuple[TokenLocation, tuple[RValue, ...]]:
         params: list[RValue] = []
-        pos = self.consume_token(TokenType.L_PAR, "expected left param").loc
         while self.get_current_token_type() != TokenType.R_PAR:
             if self.get_current_token_type() == TokenType.COMMA:
                 self.consume_token(TokenType.COMMA, "expected a comma")
-                param_token = self.consume_token(
-                    TokenType.ID, "expected a parameter name"
-                )
-                params.append(RValue(param_token.loc, param_token.lexeme))
+            param_token = self.consume_token(TokenType.ID, "expected a parameter name")
+            params.append(RValue(param_token.loc, param_token.lexeme))
             if (
                 self.get_current_token_type() == TokenType.COMMA
                 or self.get_current_token_type() == TokenType.R_PAR
@@ -334,11 +333,14 @@ class Parser:
         return pos, tuple(params)
 
     def parse_function_definition(self):
-        self.consume_token(TokenType.FUNCTION, "expected the keyword func")
+        self.consume_token(TokenType.FUNCTION, "expected the keyword def")
         func_name = self.consume_token(
             TokenType.ID, "expected the function name after seeing the func keyword"
         )
-        pos, parameters = self.parse_params()
+        loc = self.consume_token(
+            TokenType.L_PAR, "expected ( before function parameters"
+        ).loc
+        pos, parameters = self.parse_params(loc)
         assert (
             isinstance(param, RValue) for param in parameters
         ), "all parameters must be RValues"

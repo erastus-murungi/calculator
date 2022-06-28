@@ -1,8 +1,21 @@
 import sys
 
-from core import (Env, EPContext, Expression, FunctionDef, LetIn, Load, Node,
-                  NodeToEnvMapping, NodeToTypeMapping, ProcessingException,
-                  RValue, RValueVector, State, Store)
+from core import (
+    Env,
+    EPContext,
+    Expression,
+    FunctionDef,
+    LetIn,
+    Load,
+    Node,
+    NodeToEnvMapping,
+    NodeToTypeMapping,
+    ProcessingException,
+    RValue,
+    RValueVector,
+    State,
+    Store,
+)
 
 
 def check_semantics(

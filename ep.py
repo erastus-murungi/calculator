@@ -10,8 +10,7 @@ from core import EPContext, ExceptionProcessor
 from evaluator import evaluate
 from semantics import check_semantics
 from tokenizer import Tokenizer
-from utils import (dump_tokens_to_stdout, ep_to_json, pretty_print_results,
-                   print_ast)
+from utils import dump_tokens_to_stdout, ep_to_json, pretty_print_results, print_ast
 
 
 @click.command(
